@@ -18,11 +18,14 @@ dystopia review -c abc123 --output r.json              # one commit
 dystopia review -c abc123 -p                           # preview files to review
 dystopia review --text                                 # normalized findings as text on stdout
 dystopia review --engine ocr --dir ../core             # pick the engine, pick the repo
+dystopia review --engine native --from main --to feat/x  # native engine (file phase, commit B)
+dystopia review --engine native --from main --to feat/x --max-tokens 300000 --concurrency 2
 dystopia review --raw --output raw.json                # raw OCR output (old behavior)
 dystopia review --format text                          # explicit format, normalization skipped
 dystopia bench                                        # run every benchmark case once
 dystopia bench --runs 3 --case aeb2fc6                 # repeat runs, select cases
 dystopia bench --engine ocr                            # engine used by the benchmark
+dystopia models                                        # native models available from the MTH config
 dystopia --version                                     # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 By default `review` runs the `ocr` engine: OCR with `--format json` into a temp file, normalized
@@ -32,6 +35,18 @@ JSON; passing `--format` yourself also skips normalization. `--engine ocr|native
 review engine (default `ocr`) and `--dir <repo>` the repository (default: current directory).
 See `docs/engine.md` for the engine contract, registry and how to add one, and
 `docs/ocr-output.md` for the schema and severity mapping.
+
+The `native` engine uses the Pi core in-process instead of the OCR binary. Commit B has the
+file phase only: one agent turn per changed file, read-only tools (`read_file`,
+`list_changed_files`, `grep`, `git_show`), `report_finding` validated on every call, and
+`--max-tool-calls` / `--max-tokens` / `--phase-split` / `--concurrency` limits with
+`meta.truncated`. Native requires `--from` and `--to` (no `-c`) and finds the MTH install via
+`CODER_HOME` (no default; missing → exit 64). Models come from `$CODER_HOME/coder models`;
+`DYSTOPIA_MODEL` selects one by name and the default is a model different from the coding
+model (`CODER_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
+models. Git reads run through `$CODER_HOME/lib/sandbox-exec.sh`. The system prompt is a
+temporary placeholder (`lib/engine/native/prompts/placeholder.md`): the summary phase,
+deduplication and Kosma's real prompt/rules are commit C. See `docs/native.md`.
 
 `meta` carries `tool`, `version`, `engine`, `base`, `head`, `model`, `tokens_in`, `tokens_out`
 and `duration_ms`; each finding has `severity` (`chặn`/`nên sửa`/`gợi ý`), `file`, `line`,
@@ -57,6 +72,11 @@ arguments. See `docs/bench.md` for the case schema and scoring rules.
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | provider overrides (default CommandCode, OpenAI-compatible) |
 | `DYSTOPIA_BENCH_DIR` | benchmark data directory (default `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | command used by `bench` instead of `dystopia review` |
+| `CODER_HOME` | MTH install directory (required by the native engine: `coder models`, `agent`, `lib/sandbox-exec.sh`) |
+| `DYSTOPIA_MODEL` | native model to use; must exist in the MTH model list |
+| `DYSTOPIA_PI_SDK` | override the Pi SDK `dist/index.js` path |
+| `DYSTOPIA_NATIVE_DRIVER` | test-only `.mjs` fake driver (never used in normal runs) |
 
 Never commit `.env`. See `GUIDE.md` (Vietnamese) for details, `docs/engine.md` for the engine
-contract, `docs/ocr-output.md` for the output schema and `NOTICE` for attribution.
+contract, `docs/native.md` for the native engine, `docs/ocr-output.md` for the output schema
+and `NOTICE` for attribution.

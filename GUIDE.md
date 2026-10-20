@@ -15,11 +15,14 @@ $DYSTOPIA review -c abc123 --output r.json      # một commit
 $DYSTOPIA review -c abc123 -p                    # xem trước file sẽ review
 $DYSTOPIA review --text                          # findings dạng text ra stdout
 $DYSTOPIA review --engine ocr --dir ../core      # chọn engine, chọn repo cần review
+$DYSTOPIA review --engine native --from main --to feat/x   # engine native (pha file, commit B)
+$DYSTOPIA review --engine native --from main --to feat/x --max-tokens 300000 --concurrency 2
 $DYSTOPIA review --raw --output raw.json         # output gốc của OCR (hành vi cũ)
 $DYSTOPIA review --format text                   # tự chọn format thì wrapper không chuẩn hóa
 $DYSTOPIA bench                                   # chạy mọi case bench một lần
 $DYSTOPIA bench --runs 3 --case aeb2fc6           # lặp 3 lần, chỉ chọn case aeb2fc6
 $DYSTOPIA bench --engine ocr                      # engine dùng cho bench (mặc định ocr)
+$DYSTOPIA models                                  # model native dùng được (từ cấu hình MTH)
 $DYSTOPIA --version                               # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 `review` mặc định chạy engine `ocr`: OCR với `--format json` vào file tạm, chuẩn hóa thành
@@ -30,8 +33,24 @@ chọn repo (mặc định thư mục hiện tại). Hợp đồng engine, regis
 `docs/engine.md`. File tạm được xóa khi xong (adapter OCR trong `lib/engine/ocr.mjs`), exit code
 của OCR giữ nguyên. Chạy trong thư mục repo cần review (hoặc dùng `--dir`).
 
-Engine `native` **chưa có**: chọn `--engine native` báo `engine native chưa có (v0.3 commit B)`
-và exit 64. Tên engine lạ cũng exit 64.
+Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho binary OCR:
+- Bắt buộc `--from <base> --to <head>`; thiếu hoặc dùng `-c` → exit 64 với gợi ý `--from/--to`.
+- Tìm MTH qua `CODER_HOME` (bắt buộc, không có mặc định); thiếu `$CODER_HOME/coder` → exit 64.
+- Model lấy từ `$CODER_HOME/coder models`; `DYSTOPIA_MODEL` chọn theo tên, mặc định là model
+  khác model viết code (`CODER_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`).
+  `dystopia models` in danh sách, đánh dấu `*` model Dystopia đang chọn và `[code]` model viết code.
+- Mỗi file thay đổi một lượt agent; tool chỉ đọc `read_file` (tối đa 400 dòng/lần),
+  `list_changed_files`, `grep` (tối đa 200 dòng khớp), `git_show` (chỉ base/head), và
+  `report_finding` kiểm schema ngay (severity, dòng phía head, evidence...).
+- Giới hạn: `--max-tool-calls` (mặc định 40/file), `--max-tokens` (mặc định 400000),
+  `--phase-split` (mặc định 0.7 cho pha file), `--concurrency` (mặc định 2). Chạm giới hạn thì
+  dừng lượt, giữ finding đã có, ghi file vào `meta.truncated`.
+- Lệnh git chạy qua `$CODER_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH), không tự
+  viết sandbox.
+- Prompt hiện là bản tạm `lib/engine/native/prompts/placeholder.md`; pha tổng, khử trùng lặp
+  và prompt/rules thật của Kosma là commit C. Chi tiết ở `docs/native.md`.
+
+Tên engine lạ vẫn exit 64. `--engine ocr` giữ nguyên hành vi cũ.
 
 ## Bộ đo (`bench`)
 Case nằm ngoài repo, ở `$DYSTOPIA_BENCH_DIR/cases/*.json` (mặc định
@@ -46,12 +65,13 @@ $DYSTOPIA bench                    # mỗi case 1 lần
 $DYSTOPIA bench --runs 3           # mỗi case 3 lần, báo tỉ lệ trúng
 $DYSTOPIA bench --case 728a435     # chỉ chạy case được chọn (lặp lại --case được)
 $DYSTOPIA bench --engine ocr       # chọn engine (mặc định ocr)
+$DYSTOPIA bench --engine native --max-tokens 300000 --concurrency 2
 ```
 
 Bảng in ra có: dòng đầu `engine: <tên>`, rồi case, bug trúng/tổng, tỉ lệ từng bug, số finding
 cấm, số finding "nên sửa", tokens, thời gian, kết quả (`pass`/`FAIL`/`skipped`/`error`). Exit 0
 khi mọi case không bị skip đều pass, 1 khi có case fail, 64 khi cấu hình/tham số sai (kể cả
-engine lạ hoặc `native` chưa có). Schema case và cách chấm chi tiết ở `docs/bench.md`.
+engine lạ). `--engine native` dùng được và nhận các cờ giới hạn. Schema case và cách chấm chi tiết ở `docs/bench.md`.
 
 ## Biến môi trường (`.env`, hoặc file khác qua `DYSTOPIA_ENV_FILE`)
 | Biến | Ý nghĩa |
@@ -61,6 +81,10 @@ engine lạ hoặc `native` chưa có). Schema case và cách chấm chi tiết 
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | ghi đè provider |
 | `DYSTOPIA_BENCH_DIR` | thư mục dữ liệu bench (mặc định `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | lệnh reviewer thay cho `dystopia review` (dùng khi test) |
+| `CODER_HOME` | thư mục cài MTH (bắt buộc với engine native: `coder models`, `agent`, `lib/sandbox-exec.sh`) |
+| `DYSTOPIA_MODEL` | model native dùng; phải có trong danh sách của MTH |
+| `DYSTOPIA_PI_SDK` | ghi đè đường dẫn `dist/index.js` của Pi SDK |
+| `DYSTOPIA_NATIVE_DRIVER` | file `.mjs` driver giả, chỉ dùng khi test |
 Không in key ra log/chat.
 
 ## Đầu ra JSON

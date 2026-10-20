@@ -21,6 +21,10 @@ if [ "${1:-}" = bench ]; then
   shift
   exec node "$DYSTOPIA_HOME/lib/bench.mjs" "$@"
 fi
+# models chỉ cần cấu hình MTH (CODER_HOME), không cần binary OCR.
+if [ "${1:-}" = models ]; then
+  exec node "$DYSTOPIA_HOME/lib/engine/native/coder.mjs" models
+fi
 BIN="${DYSTOPIA_OCR_BIN:-$DYSTOPIA_HOME/bin/opencodereview}"
 if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
   export OCR_LLM_TOKEN="$COMMANDCODE_API_KEY"

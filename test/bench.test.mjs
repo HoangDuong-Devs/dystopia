@@ -4,6 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { scoreRun, validateCase } from '../lib/bench.mjs';
+import { requiredHits, runCase, scoreRun, validateCase } from '../lib/bench.mjs';
+import { makeNativeRepo } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -436,7 +438,56 @@ test('match lines có line null → exit 64; match file có line số → exit 6
   assert.match(fileResult.stderr, /line_from/);
 });
 
-test('--runs không hợp lệ → exit 64', async (t) => {
+test('requiredHits: min 0.67 × 3 → 2, min 0.7 × 3 → 3, min 1.0 × 1 → 1', () => {
+  assert.equal(requiredHits(0.67, 3), 2);
+  assert.equal(requiredHits(0.7, 3), 3);
+  assert.equal(requiredHits(1.0, 1), 1);
+  assert.equal(requiredHits(0.5, 2), 1);
+  assert.equal(requiredHits(0.17, 6), 2);
+  assert.equal(requiredHits(0.01, 1), 1);
+  assert.equal(requiredHits(0, 3), 0);
+});
+
+test('--runs 3, min_hit_rate 0.7: 2 trúng vẫn FAIL', async (t) => {
+  const repo = await makeRepo(t);
+  const bench = await makeBench(
+    t,
+    { hitRate: caseFor(repo, { min_hit_rate: 0.7 }) },
+    [reviewResult([finding()]), reviewResult([finding()]), reviewResult([])],
+  );
+  const { code, stdout } = await runBench(['--runs', '3'], benchEnv(bench));
+  assert.equal(code, 1);
+  assert.equal(tableRow(stdout, 'case1')[7], 'FAIL');
+});
+
+test('--runs 6, min_hit_rate 0.17: 1 trúng (0.1667) KHÔNG đạt dù làm tròn 0.17', async (t) => {
+  const repo = await makeRepo(t);
+  const sequence = [reviewResult([finding()]), ...Array.from({ length: 5 }, () => reviewResult([]))];
+  const bench = await makeBench(t, { hitRate: caseFor(repo, { min_hit_rate: 0.17 }) }, sequence);
+  const { code, stdout } = await runBench(['--runs', '6'], benchEnv(bench));
+  assert.equal(code, 1);
+  assert.equal(tableRow(stdout, 'case1')[7], 'FAIL');
+});
+
+test('runCase truyền limits xuống engine (bench --engine native)', async (t) => {
+  const repo = await makeRepo(t);
+  const cfg = validateCase(caseFor(repo));
+  let seen = null;
+  const engine = {
+    review: async (options) => {
+      seen = options;
+      return reviewResult([finding()]);
+    },
+  };
+  const limits = { maxToolCalls: 7, maxTokens: 12345, phaseSplit: 0.6, concurrency: 3 };
+  const caseRun = await runCase(cfg, 1, engine, limits);
+  assert.equal(caseRun.results[0].error, null);
+  assert.deepEqual(seen.limits, limits);
+  assert.equal(seen.base, repo.base);
+  assert.equal(seen.head, repo.head);
+});
+
+test('bench --runs không hợp lệ → exit 64', async (t) => {
   const repo = await makeRepo(t);
   const bench = await makeBench(t, { c: caseFor(repo) }, [reviewResult([finding()])]);
   for (const value of ['0', '-1', 'abc', '1.5']) {
@@ -577,14 +628,67 @@ test('không có DYSTOPIA_BENCH_REVIEWER: bench gọi engine qua hợp đồng v
   assert.equal(document.cases[0].runs[0].findings[0].line, 100);
 });
 
-test('bench --engine native → exit 64, nói rõ chưa có ở commit B', async (t) => {
-  const repo = await makeRepo(t);
-  const bench = await makeBench(t, { c: caseFor(repo) }, [reviewResult([finding()])]);
-  const env = benchEnv(bench);
-  delete env.DYSTOPIA_BENCH_REVIEWER;
+test('bench --engine native chạy được với MTH + driver giả (tự skip nếu thiếu sandbox)', async (t) => {
+  const coderHome = process.env.CODER_HOME?.trim();
+  if (!coderHome) {
+    t.skip('thiếu CODER_HOME');
+    return;
+  }
+  const sandbox = path.join(coderHome, 'lib', 'sandbox-exec.sh');
+  if (!existsSync(sandbox)) {
+    t.skip('thiếu $CODER_HOME/lib/sandbox-exec.sh');
+    return;
+  }
+  const repo = await makeNativeRepo(t, { files: 1 });
+  const probe = await execFileAsync(sandbox, ['true'], { env: { ...process.env, CODER_WORKDIR: repo.dir } }).then(
+    () => true,
+    () => false,
+  );
+  if (!probe) {
+    t.skip('sandbox-exec không chạy được trong môi trường này');
+    return;
+  }
 
-  const { code, stderr } = await runBench(['--engine', 'native'], env);
-  assert.equal(code, 64);
-  assert.match(stderr, /native/);
-  assert.match(stderr, /commit B/);
+  const bench = await makeBench(
+    t,
+    {
+      nativeCase: caseFor(repo, {
+        id: 'nativeCase',
+        base: repo.base,
+        head: repo.head,
+        expect_bugs: [{ id: 'dong2', file: 'src/file1.ts', line_from: 2, line_to: 2 }],
+      }),
+    },
+    [],
+  );
+  const scenario = {
+    model: 'fake/bench-native',
+    steps: [
+      {
+        report: {
+          file: 'src/file1.ts',
+          line: 2,
+          end_line: 2,
+          severity: 'nên sửa',
+          rule: 'logic',
+          claim: 'Giá trị cũ',
+          evidence: 'export const value1b = 2;',
+          confidence: 0.8,
+        },
+      },
+    ],
+  };
+  const env = benchEnv(bench, {
+    CODER_HOME: coderHome,
+    DYSTOPIA_NATIVE_DRIVER: path.join(ROOT, 'test', 'fixtures', 'native-driver', 'fake-driver.mjs'),
+    DYSTOPIA_FAKE_SCENARIO: JSON.stringify(scenario),
+  });
+  delete env.DYSTOPIA_BENCH_REVIEWER;
+  delete env.DYSTOPIA_MODEL;
+
+  const { code, stdout } = await runBench(['--engine', 'native', '--max-tokens', '400000'], env);
+  assert.equal(code, 0, stdout);
+  assert.equal(stdout.split('\n')[0], 'engine: native');
+  assert.equal(tableRow(stdout, 'nativeCase')[7], 'pass');
 });
+

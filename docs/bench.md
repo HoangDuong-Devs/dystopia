@@ -70,7 +70,8 @@ toàn, không cần kiểm các trường còn lại; vẫn xuất hiện trong 
 
 1. Tạo worktree detached: `git -C <repo> worktree add --detach /tmp/fm-fx-bench-<id>-<pid> <head>`.
 2. Gọi engine qua hợp đồng chung (`docs/engine.md`) trong worktree: `review({ repo: worktree,
-   base, head })`, mặc định engine `ocr`. Nếu đặt `DYSTOPIA_BENCH_REVIEWER`, bench chạy lệnh
+   base, head, limits })`, mặc định engine `ocr`; `--engine native` chạy engine native (xem
+   `docs/native.md`) và chuyển tiếp các cờ giới hạn. Nếu đặt `DYSTOPIA_BENCH_REVIEWER`, bench chạy lệnh
    đó thay cho engine (cùng tham số `review --from <base> --to <head> --output <file tạm>`,
    ghi JSON đã chuẩn hóa vào `--output`); dùng cho test, không gọi LLM/OCR thật.
 3. Đọc JSON `{ meta, findings }` do engine/reviewer trả về (schema ở `docs/ocr-output.md`).
@@ -93,10 +94,24 @@ Số dòng finding là phía HEAD (normalize đã chốt).
 - Finding cấm: mọi finding có `severity` trong `forbid_severity`, **mọi rank**.
 - Finding "nên sửa" được đếm để theo dõi, không làm fail.
 
-Với `--runs N`, mỗi bug có `hit_rate = số lần trúng / N` (làm tròn 2 chữ số, nên `2/3` được
-tính là `0.67`). Case **pass** khi:
+> **Giới hạn của `match: "file"`:** chỉ cần **một finding bất kỳ** đúng file trong top
+> `max_rank` là tính trúng, nên rất dễ trúng nhầm (finding cùng file nhưng sai chỗ vẫn tính).
+> Chỉ dùng khi bug không gắn với dòng code cụ thể; bug có dòng thì dùng `match: "lines"`.
 
-1. mọi bug có `hit_rate ≥ min_hit_rate`, và
+Với `--runs N`, mỗi bug có `hit_rate = số lần trúng / N` (in ra làm tròn 2 chữ số, nên `2/3`
+hiện là `0.67`). Bug **đạt** khi số lần trúng đủ ngưỡng, không so trực tiếp tỉ lệ đã làm tròn:
+
+```
+dung_sai  = min(0.01, min_hit_rate × runs / 2)
+số_lần_cần = max(1, ceil(min_hit_rate × runs - dung_sai - 1e-9))   # min_hit_rate > 0
+```
+
+Trừ dung sai nhỏ để cấu hình `min_hit_rate` hai chữ số thập phân ứng với tỉ lệ in ra:
+`0.67 × 3` → cần 2 lần trúng, còn `0.7 × 3` → cần 3 lần. Dung sai không vượt nửa ngưỡng,
+nên `min_hit_rate` dương luôn cần ít nhất 1 lần trúng. `min_hit_rate: 1.0` với `--runs 1`
+cần đúng lần chạy đó trúng. Case **pass** khi:
+
+1. mọi bug có số lần trúng ≥ số lần cần ở trên, và
 2. không lần chạy nào có finding cấm, và
 3. không lần chạy nào lỗi.
 
@@ -106,13 +121,15 @@ Case không có `expect_bugs` vẫn pass nếu không có finding cấm và khô
 
 ```
 dystopia bench [--runs N] [--case <id>]... [--engine <tên>]
+               [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
 ```
 
 | Tham số | Ý nghĩa |
 |---|---|
 | `--runs N` | số lần chạy mỗi case, số nguyên ≥ 1 (mặc định 1) |
 | `--case <id>` | chỉ chạy case có id này; lặp lại được nhiều lần |
-| `--engine <tên>` | engine review, mặc định `ocr`; tên lạ hoặc `native` chưa có → exit 64 |
+| `--engine <tên>` | engine review, mặc định `ocr`; engine `native` chạy pha file (commit B); tên lạ → exit 64 |
+| `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency` | giới hạn chuyển cho engine native; engine khác bỏ qua |
 
 Tham số sai (ví dụ `--runs 0`, `--runs abc`) hoặc cấu hình case sai → in lỗi rõ ràng và exit 64,
 trước khi chạy bất kỳ case nào.

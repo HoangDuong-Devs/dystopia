@@ -20,6 +20,8 @@ import {
   validateResult,
 } from '../lib/engine/index.mjs';
 import { review as ocrReview } from '../lib/engine/ocr.mjs';
+import { review as nativeReview } from '../lib/engine/native/index.mjs';
+import { makeNativeRepo } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -160,6 +162,64 @@ test('adapter ocr trả { findings, meta } đúng schema, meta.engine = ocr', as
   assert.deepEqual(args.slice(-4), ['--from', 'base0001', '--to', 'head0002']);
 });
 
+test('hợp đồng chung chạy trên cả ocr (output giả) và native (driver giả)', async (t) => {
+  const fake = await makeFakeOcr(t);
+  const ocrResult = await ocrReview({ repo: fake.dir, bin: fake.bin, version: VERSION });
+  assert.deepEqual(validateResult(ocrResult), []);
+  assert.equal(ocrResult.meta.engine, 'ocr');
+
+  const repo = await makeNativeRepo(t, { files: 1 });
+  const runner = async (command) => {
+    try {
+      const result = await execFileAsync('bash', ['-c', command], {
+        cwd: repo.dir,
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      return { stdout: result.stdout, stderr: result.stderr, status: 0 };
+    } catch (error) {
+      return {
+        stdout: error.stdout ?? '',
+        stderr: error.stderr ?? '',
+        status: typeof error.code === 'number' ? error.code : 1,
+      };
+    }
+  };
+  const model = { provider: 'fake', model: 'model-contract', label: 'fake/model-contract' };
+  const driver = async (options) => ({
+    model: 'fake/model-contract',
+    async prompt() {
+      await options.tools.report_finding({
+        file: 'src/file1.ts',
+        line: 2,
+        end_line: 2,
+        severity: 'chặn',
+        rule: 'logic',
+        claim: 'Giá trị sai',
+        evidence: 'export const value1b = 2;',
+        confidence: 0.9,
+      });
+    },
+    async abort() {},
+    async dispose() {},
+  });
+
+  const nativeResult = await nativeReview({
+    repo: repo.dir,
+    base: repo.base,
+    head: repo.head,
+    models: [model],
+    model,
+    driver,
+    runner,
+    version: VERSION,
+  });
+  assert.deepEqual(validateResult(nativeResult), []);
+  assert.equal(nativeResult.meta.engine, 'native');
+  assert.equal(nativeResult.meta.model, 'fake/model-contract');
+  assert.equal(nativeResult.findings.length, 1);
+  assert.equal(nativeResult.findings[0].severity, 'chặn');
+});
+
 test('validateResult từ chối severity lạ, line sai, thiếu trường, key phán quyết', () => {
   const cases = [
     ['severity lạ', { findings: [finding({ severity: 'high' })] }, /severity/],
@@ -186,20 +246,14 @@ test('validateResult từ chối severity lạ, line sai, thiếu trường, key
   assert.notDeepEqual(validateResult({ findings: [], meta: null }), []);
 });
 
-test('getEngine: tên lạ và native chưa có đều lỗi exit 64', () => {
+test('getEngine: native đã đăng ký, tên lạ vẫn lỗi exit 64', () => {
   assert.throws(
     () => getEngine('bogus'),
     (error) => error instanceof EngineError && error.code === 'ENGINE_UNKNOWN' && error.exitCode === 64,
   );
-  assert.throws(
-    () => getEngine('native'),
-    (error) =>
-      error instanceof EngineError &&
-      error.code === 'ENGINE_UNAVAILABLE' &&
-      error.exitCode === 64 &&
-      /native/.test(error.message) &&
-      /commit B/.test(error.message),
-  );
+  const native = getEngine('native');
+  assert.equal(typeof native.review, 'function');
+  assert.ok(listEngines().includes('native'));
   assert.equal(typeof getEngine('ocr').review, 'function');
 });
 
@@ -212,12 +266,20 @@ test('CLI --engine lạ → exit 64 và báo tên engine', async (t) => {
   assert.equal(await readArgs(fake.argsFile), null, 'không được gọi OCR');
 });
 
-test('CLI --engine native → exit 64, nói rõ chưa có ở commit B', async (t) => {
+test('CLI --engine native thiếu --from/--to hoặc dùng -c → exit 64, gợi ý dải', async (t) => {
   const fake = await makeFakeOcr(t);
-  const { code, stderr } = await runCli(['review', '--engine', 'native'], cliEnv(fake));
-  assert.equal(code, 64);
-  assert.match(stderr, /native/);
-  assert.match(stderr, /commit B/);
+  const missing = await runCli(['review', '--engine', 'native'], cliEnv(fake));
+  assert.equal(missing.code, 64);
+  assert.match(missing.stderr, /--from/);
+  assert.match(missing.stderr, /--to/);
+
+  const commit = await runCli(
+    ['review', '--engine', 'native', '--from', 'base0001', '--to', 'head0002', '-c', 'abc123'],
+    cliEnv(fake),
+  );
+  assert.equal(commit.code, 64);
+  assert.match(commit.stderr, /không hỗ trợ -c/);
+  assert.equal(await readArgs(fake.argsFile), null, 'không được gọi OCR');
 });
 
 test('dystopia --version in dystopia <VERSION> (<git short HEAD|nogit>)', async () => {

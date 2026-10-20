@@ -2,8 +2,8 @@
 
 Dystopia v0.3 tách phần review thành **engine** cắm được. CLI, `--text`, sắp xếp, bench và
 `docs/ocr-output.md` chỉ biết output của hợp đồng; chúng không biết engine nào ở bên dưới.
-Engine hiện có: `ocr` (adapter bọc OpenCodeReview, mặc định). Engine `native` (chạy lõi Pi)
-mới là việc của commit B/C, xem mục 6.
+Engine hiện có: `ocr` (adapter bọc OpenCodeReview, mặc định) và `native` (chạy lõi Pi, commit B
+mới có pha file — xem `docs/native.md`).
 
 ## 1. Hợp đồng
 
@@ -66,14 +66,14 @@ Kết quả:
 import { getEngine, registerEngine, listEngines } from './lib/engine/index.mjs';
 
 getEngine('ocr');        // adapter OCR
-getEngine('native');     // lỗi ENGINE_UNAVAILABLE: engine native chưa có (v0.3 commit B)
+getEngine('native');     // adapter engine native (pha file, commit B)
 getEngine('khong-co');   // lỗi ENGINE_UNKNOWN: engine lạ
 ```
 
 | Mã lỗi | Exit code CLI | Khi nào |
 |---|---|---|
 | `ENGINE_UNKNOWN` | 64 | tên engine không có trong registry |
-| `ENGINE_UNAVAILABLE` | 64 | tên đã hứa nhưng chưa làm xong (`native`) |
+| `ENGINE_UNAVAILABLE` | 64 | tên đã hứa nhưng chưa làm xong (hiện không còn engine nào) |
 | `ENGINE_BAD_ADAPTER` | 64 | đăng ký engine thiếu hàm `review()` |
 | `ENGINE_BAD_RESULT` | 1 | output engine sai schema |
 | `OCR_MISSING` | 127 | chưa build binary OCR (thông điệp như cũ) |
@@ -91,10 +91,11 @@ Mặc định engine là `ocr`.
    registerEngine('ten-engine', { name: 'ten-engine', review });
    ```
 3. Nếu engine cần trạng thái "chưa có" trong giao diện CLI, thêm vào `NOT_READY` trong
-   `lib/engine/index.mjs` để thông điệp rõ ràng thay vì "engine lạ".
+   `lib/engine/index.mjs` để thông điệp rõ ràng thay vì "engine lạ" (hiện trống).
 4. Thêm test hợp đồng: gọi `review()` với engine giả/fixture, rồi `validateResult` phải rỗng.
 
-Không engine nào được ghi file hay chạy lệnh; engine chỉ đọc repo và gọi model.
+Không engine nào được ghi file; engine chỉ đọc repo và gọi model (`native` chạy lệnh git đọc
+qua sandbox của MTH).
 
 ## 4. Adapter `ocr`
 
@@ -117,21 +118,34 @@ Không engine nào được ghi file hay chạy lệnh; engine chỉ đọc repo
 ```
 dystopia review [--from <base> --to <head>] [--dir <repo>] [--engine ocr|native]
                 [--output <file>] [--text] [--raw] [cờ của OCR...]
+dystopia review --engine native --from <base> --to <head>
+                [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
 dystopia bench [--case <id>] [--runs N] [--engine ocr|native]
-dystopia models          # (commit B: lấy từ cấu hình MTH)
+                [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
+dystopia models          # model native dùng được, lấy từ cấu hình MTH
 dystopia --version       # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 
 `--dir` mặc định là thư mục hiện tại. `bench` ghi `engine` vào file kết quả và in
 `engine: <tên>` ở dòng đầu bảng; khi không có `DYSTOPIA_BENCH_REVIEWER`, bench gọi engine qua
-hợp đồng (không qua wrapper bash).
+hợp đồng (không qua wrapper bash) và chuyển tiếp các cờ giới hạn.
 
-## 6. Chưa làm (commit B/C)
+`--engine native` bắt buộc có `--from`/`--to`; thiếu hoặc dùng `-c` → exit 64 với gợi ý dùng
+`--from/--to`. Các cờ giới hạn của native cũng được `bench` nhận.
 
-- Engine `native`: chạy lõi Pi qua thư viện, hai pha file/tổng, tool chỉ đọc, `report_finding`,
-  khử trùng lặp, `meta.truncated`. Chọn `--engine native` hiện báo
-  `engine native chưa có (v0.3 commit B)` và exit 64.
-- Phần "Bổ sung" của Kosma: tìm MTH qua `CODER_HOME` (thiếu → lỗi rõ, exit 64) và `DYSTOPIA_MODEL`
-  chọn model từ danh sách của MTH (mặc định khác `CODER_DEFAULT_MODEL`, ghi model thật vào
-  `meta.model`). Commit A chưa có hai biến này.
-- Prompt hệ thống và rules-overlay dạng file (commit B/C, Kosma viết).
+## 6. Engine native (commit B) và phần còn lại (commit C)
+
+Commit B đã có:
+
+- adapter native chạy lõi Pi qua thư viện, tìm MTH qua `CODER_HOME` (thiếu → exit 64),
+  `DYSTOPIA_MODEL` chọn từ danh sách MTH, model mặc định khác `CODER_DEFAULT_MODEL`, ghi
+  model thật vào `meta.model`;
+- pha file: mỗi file thay đổi một lượt agent, chạy song song có giới hạn;
+- tool chỉ đọc `read_file`, `list_changed_files`, `grep`, `git_show`; `report_finding` kiểm
+  schema ngay; lệnh git chạy qua `sandbox-exec` của MTH;
+- `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency`, `meta.truncated`;
+- `dystopia models`.
+
+Commit C còn lại: pha tổng, khử trùng lặp, nạp prompt/rules thật của Kosma. Prompt hiện là
+bản tạm `lib/engine/native/prompts/placeholder.md`. Chi tiết kiến trúc, tool và biến môi
+trường ở `docs/native.md`.
