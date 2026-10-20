@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build OpenCodeReview vào bin/ và tự kiểm. Không sudo, không sửa clone upstream.
 set -uo pipefail
-HARMONY_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SRC="${OCR_SRC:-$HOME/firemoth/tools/opencodereview}"
 CODER_ENV="${CODER_ENV:-$HOME/firemoth/tools/coder/.env}"
 fail=0
@@ -19,24 +19,24 @@ OCR_REF="${OCR_REF:-9867a3d}"
 FULL="$(git -C "$SRC" rev-parse HEAD 2>/dev/null)"
 case "$FULL" in "$OCR_REF"*) ok "nguồn: $SRC @ $COMMIT (đúng ref ghim $OCR_REF)";;
   *) bad "nguồn ở $COMMIT, khác ref ghim $OCR_REF. Không tự checkout; đặt OCR_REF hoặc đưa clone về đúng ref.";; esac
-mkdir -p "$HARMONY_HOME/bin"
+mkdir -p "$DYSTOPIA_HOME/bin"
 if (cd "$SRC" && GOFLAGS=-buildvcs=false CGO_ENABLED=0 "$GO" build \
     -ldflags "-X main.Version=v0.0.0-$COMMIT -X main.GitCommit=$COMMIT -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o "$HARMONY_HOME/bin/opencodereview" ./cmd/opencodereview); then ok "build: bin/opencodereview"
+    -o "$DYSTOPIA_HOME/bin/opencodereview" ./cmd/opencodereview); then ok "build: bin/opencodereview"
 else bad "build lỗi"; fi
 if [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then warn "clone upstream có thay đổi chưa commit"; else ok "clone upstream sạch"; fi
-if [ ! -f "$HARMONY_HOME/.env" ]; then
-  cp "$HARMONY_HOME/.env.example" "$HARMONY_HOME/.env"
+if [ ! -f "$DYSTOPIA_HOME/.env" ]; then
+  cp "$DYSTOPIA_HOME/.env.example" "$DYSTOPIA_HOME/.env"
   if [ -f "$CODER_ENV" ] && grep -q '^COMMANDCODE_API_KEY=.' "$CODER_ENV"; then
-    grep -v '^COMMANDCODE_API_KEY=' "$HARMONY_HOME/.env" > "$HARMONY_HOME/.env.tmp"
-    grep '^COMMANDCODE_API_KEY=' "$CODER_ENV" >> "$HARMONY_HOME/.env.tmp"
-    mv "$HARMONY_HOME/.env.tmp" "$HARMONY_HOME/.env"; ok ".env tạo mới, key chép từ coder/.env"
+    grep -v '^COMMANDCODE_API_KEY=' "$DYSTOPIA_HOME/.env" > "$DYSTOPIA_HOME/.env.tmp"
+    grep '^COMMANDCODE_API_KEY=' "$CODER_ENV" >> "$DYSTOPIA_HOME/.env.tmp"
+    mv "$DYSTOPIA_HOME/.env.tmp" "$DYSTOPIA_HOME/.env"; ok ".env tạo mới, key chép từ coder/.env"
   else warn ".env tạo mới nhưng chưa có COMMANDCODE_API_KEY"; fi
 else ok ".env đã có"; fi
-[ -f "$HARMONY_HOME/rules-overlay/rule.json" ] && ok "rules-overlay/rule.json sẽ được truyền qua --rule" || ok "rules-overlay trống, dùng luật upstream"
-chmod 600 "$HARMONY_HOME/.env"; chmod 755 "$HARMONY_HOME/harmony" "$HARMONY_HOME/install.sh"
-grep -q '^COMMANDCODE_API_KEY=.' "$HARMONY_HOME/.env" || grep -q '^OCR_LLM_TOKEN=.' "$HARMONY_HOME/.env" \
+[ -f "$DYSTOPIA_HOME/rules-overlay/rule.json" ] && ok "rules-overlay/rule.json sẽ được truyền qua --rule" || ok "rules-overlay trống, dùng luật upstream"
+chmod 600 "$DYSTOPIA_HOME/.env"; chmod 755 "$DYSTOPIA_HOME/dystopia" "$DYSTOPIA_HOME/install.sh"
+grep -q '^COMMANDCODE_API_KEY=.' "$DYSTOPIA_HOME/.env" || grep -q '^OCR_LLM_TOKEN=.' "$DYSTOPIA_HOME/.env" \
   && ok "key có trong .env (không in)" || warn "chưa có key trong .env"
-if v="$("$HARMONY_HOME/harmony" --version 2>&1)"; then ok "harmony --version: $(echo "$v" | head -1)"
-elif "$HARMONY_HOME/harmony" --help >/dev/null 2>&1; then ok "harmony --help chạy được"; else bad "harmony không chạy được"; fi
+if v="$("$DYSTOPIA_HOME/dystopia" --version 2>&1)"; then ok "dystopia --version: $(echo "$v" | head -1)"
+elif "$DYSTOPIA_HOME/dystopia" --help >/dev/null 2>&1; then ok "dystopia --help chạy được"; else bad "dystopia không chạy được"; fi
 [ $fail = 0 ] && echo "Kết quả: sẵn sàng." || { echo "Kết quả: chưa sẵn sàng."; exit 1; }
