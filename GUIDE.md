@@ -44,14 +44,17 @@ Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho
   đánh dấu `*` model Dystopia đang chọn và `[code]` model viết code.
 - `CODER_HOME` vẫn bắt buộc nhưng **chỉ** để tìm `$CODER_HOME/lib/sandbox-exec.sh`; thiếu biến
   hoặc thiếu file → exit 64.
-- Mỗi file thay đổi một lượt agent; tool chỉ đọc `read_file` (tối đa 400 dòng/lần),
-  `list_changed_files`, `grep` (tối đa 200 dòng khớp), `git_show` (chỉ base/head), và
-  `report_finding` kiểm schema ngay (severity, dòng phía head, evidence...).
+- Mỗi file thay đổi một lượt agent; tool chỉ đọc `read_file` (tối đa 150 dòng/12000 ký tự mỗi
+  lần, mặc định đọc quanh hunk diff), `list_changed_files`, `grep` (tối đa 60 dòng khớp),
+  `git_show` (chỉ base/head, tối đa 200 dòng), và `report_finding` kiểm schema ngay
+  (severity, dòng phía head, evidence...).
 - Giới hạn: `--max-tool-calls` (mặc định 40/file), `--max-tokens` (mặc định 400000),
-  `--phase-split` (mặc định 0.7 cho pha file), `--concurrency` (mặc định 2). Chạm giới hạn thì
-  dừng lượt, giữ finding đã có, ghi file vào `meta.truncated`.
-- Lệnh git chạy qua `$CODER_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH), không tự
-  viết sandbox.
+  `--phase-split` (mặc định 0.7 cho pha file), `--concurrency` (mặc định 2). 20% ngân sách mỗi
+  file được dành cho report: chạm ngưỡng thì ngừng đọc và gửi một lượt cuối để báo finding;
+  chỉ vượt trần cứng mới dừng hẳn và ghi file vào `meta.truncated`. File lỗi provider được
+  retry một lần; lỗi còn lại vào `meta.errors` và output được ghi tăng dần (`meta.partial`).
+- Lệnh git chạy qua `$CODER_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH, env allowlist
+  không chứa key/token), không tự viết sandbox.
 - Prompt hiện là bản tạm `lib/engine/native/prompts/placeholder.md`; pha tổng, khử trùng lặp
   và prompt/rules thật của Kosma là commit C. Chi tiết ở `docs/native.md`.
 

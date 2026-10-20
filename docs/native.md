@@ -2,7 +2,8 @@
 
 Engine `native` chạy lõi Pi qua thư viện, thay vì gọi binary OCR. Commit B mới có
 **pha file**: mỗi file thay đổi một lượt agent, tool chỉ đọc, `report_finding` kiểm schema
-ngay, giới hạn tool call/token và `meta.truncated`. Pha tổng, khử trùng lặp và prompt/rules
+ngay, giới hạn tool call/token, `meta.truncated`, `meta.per_file`, `meta.errors` và ghi output
+tăng dần. Pha tổng, khử trùng lặp và prompt/rules
 thật là **commit C**.
 
 ```
@@ -67,10 +68,10 @@ dystopia models
 
 | Tool | Việc |
 |---|---|
-| `read_file(path, from, to)` | đọc tối đa **400 dòng/lần**; vượt thì cắt và báo trong kết quả |
+| `read_file(path, from?, to?)` | đọc tối đa **150 dòng** và **~12000 ký tự** mỗi lần; `from`/`to` là 1-based, bao gồm hai đầu. Không truyền dải thì mặc định đọc cửa sổ quanh hunk diff của file thay đổi (mỗi hunk ±40 dòng, gộp các cửa sổ chồng nhau) hoặc **150 dòng đầu** với file không đổi. Bị cắt thì kết quả có `[đã cắt: dòng X-Y; gọi lại với from/to]` kèm tổng số dòng |
 | `list_changed_files()` | `git diff --name-status` + `--numstat` base..head, kèm `+/-`; bỏ file lock/sinh tự động/binary |
-| `grep(pattern, path_glob)` | `git grep -n`, tối đa **200 dòng khớp**, có ghi chú khi cắt |
-| `git_show(rev, path)` | chỉ nhận `rev` là base hoặc head |
+| `grep(pattern, path_glob)` | `git grep -n`, tối đa **60 dòng khớp** và **~8000 ký tự**, có ghi chú `[đã cắt: hiển thị X/Y dòng khớp; ...]` khi cắt |
+| `git_show(rev, path)` | chỉ nhận `rev` là base hoặc head; tối đa **200 dòng** và **~12000 ký tự**, có ghi chú khi cắt |
 | `report_finding(...)` | xem mục 4 |
 
 Danh sách bỏ qua lấy từ `rules-overlay/ignore.txt` (nếu có) cộng mặc định:
@@ -89,6 +90,12 @@ Chặn đường dẫn cho mọi tool:
 `$CODER_HOME/lib/sandbox-exec.sh '<lệnh git>'` với `CODER_WORKDIR=<repo>`: sandbox bwrap
 chỉ đọc của MTH, không mạng. Đây là **cách duy nhất** engine native còn dùng `CODER_HOME`.
 Engine không tự viết sandbox và không chạy lệnh nào khác ngoài git đọc.
+
+Biến môi trường truyền vào `sandbox-exec.sh` là **allowlist**, không phải bản sao `process.env`:
+`PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, các biến `GIT_*`, các biến `CODER_*`
+cấu hình sandbox và `CODER_WORKDIR=<repo>`. Mọi tên khớp `/KEY|TOKEN|SECRET|PASSWORD/i`
+và mọi biến ngoài allowlist đều bị bỏ, nên `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN` không bao giờ
+đi vào tiến trình sandbox.
 
 ## 4. `report_finding`
 
@@ -114,9 +121,25 @@ sau cùng), và cả kết quả đi qua `validateResult` của commit A.
 2. Mỗi file một lượt agent, chạy song song tối đa `--concurrency` (mặc định **2**).
 3. Ngân sách token tổng chia theo pha: `--phase-split` (mặc định **0.7**) cho pha file,
    phần còn lại để dành cho pha tổng ở commit C. Ngân sách pha file chia đều cho các file.
-4. Chạm `--max-tool-calls` (mặc định **40/file**) hoặc ngân sách token của file → dừng lượt đó
-   (`abort`), giữ finding đã có, thêm file vào `meta.truncated`.
-5. Không có tool ghi file/chạy lệnh cho agent.
+4. Mỗi file giữ lại **20%** ngân sách (hằng `reportReserveRatio` trong `limits.mjs`) cho việc
+   báo cáo. Khi token chạm `ngân sách file - dự phòng` hoặc số tool call chạm
+   `--max-tool-calls - 2`, engine **không abort**: tool đọc bị khóa và trả
+   `hết ngân sách, hãy report_finding ngay`, rồi engine gửi **một lượt nhắc cuối** yêu cầu gọi
+   `report_finding` cho mọi lỗi đã thấy và dừng. Finding báo ở lượt cuối vẫn được giữ.
+   Chỉ khi vượt **trần cứng** (`--max-tool-calls` hoặc toàn bộ ngân sách token của file) mới
+   abort, giữ finding đã có và thêm file vào `meta.truncated`.
+5. File lỗi provider/stream (không phải `NATIVE_AUTH`/`NATIVE_RATE`) được **retry một lần với
+   session mới**. Lỗi lần hai vào `meta.errors` dạng `{file, error}` (error đã scrub key),
+   finding của các file khác vẫn giữ. Review trả exit `0` nếu còn ít nhất một file chạy xong;
+   exit `20` nếu mọi file đều lỗi.
+6. Khi có `--output`, sau mỗi file engine ghi **nguyên tử** (file tạm + rename) JSON finding
+   đến hiện tại với `meta.partial: true`. Lần ghi cuối đặt `meta.partial: false`, nên crash
+   giữa chừng vẫn giữ được các file đã xong.
+7. Không có tool ghi file/chạy lệnh cho agent.
+
+`meta.per_file` là mảng `{file, tokens_in, tokens_out, tool_calls, truncated}` cho từng file
+(cùng dữ liệu với `meta.phases.file.files`); `meta.errors` liệt kê file lỗi và `meta.partial`
+cho biết lần ghi hiện tại là tạm hay cuối.
 
 `meta` của engine native:
 
@@ -135,6 +158,11 @@ sau cùng), và cả kết quả đi qua `validateResult` của commit A.
   "truncated": ["src/file1.ts"],
   "concurrency": 2,
   "limits": { "max_tool_calls": 40, "max_tokens": 400000, "phase_split": 0.7 },
+  "per_file": [
+    { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true }
+  ],
+  "errors": [{ "file": "src/file2.ts", "error": "Pi báo lỗi provider: Stream ended without finish_reason" }],
+  "partial": false,
   "phases": {
     "file": {
       "tokens_in": 1200,
@@ -170,6 +198,10 @@ bằng `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN` thành `[REDACTED]`:
 - `NATIVE_AUTH`, exit `21`: provider trả 401/403 (lỗi xác thực);
 - `NATIVE_RATE`, exit `23`: provider trả 429 (giới hạn tốc độ);
 - `NATIVE_ERROR`, exit `20`: lỗi provider khác.
+
+Lỗi provider của một file không làm hỏng cả review: `loop.mjs` retry file đó đúng một lần bằng
+session mới rồi mới ghi vào `meta.errors`. `NATIVE_AUTH`/`NATIVE_RATE` vẫn dừng toàn bộ review
+với exit `21`/`23`.
 
 Lỗi này propagate qua `loop.mjs`/`index.mjs` tới CLI: review thoát khác 0 và **không ghi**
 output rỗng. Không thông điệp lỗi nào của driver in env hay giá trị key; lỗi chỉ nêu đường dẫn
@@ -212,13 +244,18 @@ launcher map `OCR_LLM_TOKEN` từ `COMMANDCODE_API_KEY` khi biến này chưa đ
 node --test test/*.test.mjs
 ```
 
-- `test/native-tools.test.mjs`: path traversal/tuyệt đối/symlink/`.git`, cắt 400 dòng,
-  `git_show` rev lạ, lọc file bỏ qua; một test chạy thật qua `sandbox-exec` và tự skip khi
-  thiếu `CODER_HOME`/bwrap.
+- `test/native-tools.test.mjs`: path traversal/tuyệt đối/symlink/`.git`, `read_file` cắt 150
+dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `git_show` 200 dòng,
+  env allowlist của `sandbox-exec` (không lọt key/token), `git_show` rev lạ, lọc file bỏ qua;
+  một test chạy thật qua `sandbox-exec` và tự skip khi thiếu `CODER_HOME`/bwrap.
 - `test/native-finding.test.mjs`: từ chối severity sai, line ngoài head, file không đổi,
   evidence rỗng; agent sửa lại trong cùng lượt.
-- `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, token/phase-split,
+- `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, ngân sách dự phòng
+  report (ngừng đọc, lượt cuối vẫn giữ finding), `maxToolCalls-2`, token/phase-split,
   concurrency, `meta.model`, giới hạn mặc định.
+- `test/native-isolation.test.mjs`: một file lỗi stream hai lần → file khác vẫn có finding,
+  `meta.errors` đúng file, output `partial: true` ghi sau file đầu, exit 0; lỗi một lần rồi
+  thành công → không có `meta.errors`; mọi file lỗi → exit 20.
 - `test/native-coder.test.mjs`: đọc `agent/models.json` (không cần `CODER_HOME`),
   `CODER_HOME` thiếu khi review native → 64, `DYSTOPIA_MODEL` lạ → 64, model mặc định khác
   model viết code, `dystopia models`.
@@ -237,7 +274,7 @@ Fixture chỉ dùng tên giả (`src/file1.ts`, ...), không chứa code hay tê
 | Code | Khi nào |
 |---|---|
 | `64` | `.env` rộng hơn 600, thiếu `agent/models.json`, thiếu `CODER_HOME` hoặc `$CODER_HOME/lib/sandbox-exec.sh`, `DYSTOPIA_MODEL` lạ, thiếu `--from`/`--to`, dùng `-c` với native, giới hạn sai, không tìm thấy Pi SDK/model |
-| `20` | lỗi provider khác khi chạy Pi (assistant `stopReason: error`) |
+| `20` | lỗi provider khác khi chạy Pi (`NATIVE_ERROR`), hoặc **mọi file** đều lỗi sau retry (`NATIVE_ALL_FILES_FAILED`); output tạm `partial: true` có thể còn lại |
 | `21` | provider trả 401/403 (lỗi xác thực, `NATIVE_AUTH`) |
 | `23` | provider trả 429 (giới hạn tốc độ, `NATIVE_RATE`) |
 | `1` | lỗi chạy engine/output sai schema |

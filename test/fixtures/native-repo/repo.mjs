@@ -17,6 +17,7 @@ export async function git(cwd, args) {
 export async function makeNativeRepo(t, options = {}) {
   const count = options.files ?? 4;
   const bigLines = options.bigLines ?? 450;
+  const changeBig = options.changeBig === true;
   const root = await mkdtemp(path.join(tmpdir(), 'dystopia-native-'));
   const dir = path.join(root, 'repo');
   await mkdir(dir, { recursive: true });
@@ -53,6 +54,9 @@ export async function makeNativeRepo(t, options = {}) {
     );
   }
   await writeFile(path.join(dir, 'package-lock.json'), '{"lockfileVersion": 3, "changed": true}\n');
+  if (changeBig) {
+    await writeFile(path.join(dir, 'src', 'big.ts'), `${big}\nappended 451\nappended 452\nappended 453\n`);
+  }
   await writeFile(path.join(dir, 'dist', 'bundle.js'), 'console.log(2);\n');
   await writeFile(path.join(dir, 'assets', 'data.bin'), Buffer.from([0, 0, 4, 5, 6]));
 

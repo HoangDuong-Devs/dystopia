@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
@@ -31,9 +33,15 @@ function localRunner(repo) {
   };
 }
 
-async function setup(t, options) {
+async function setup(t, options, toolOptions = {}) {
   const repo = await makeNativeRepo(t, options);
-  const tools = createTools({ repo: repo.dir, base: repo.base, head: repo.head, runner: localRunner(repo.dir) });
+  const tools = createTools({
+    repo: repo.dir,
+    base: repo.base,
+    head: repo.head,
+    runner: localRunner(repo.dir),
+    ...toolOptions,
+  });
   return { repo, tools };
 }
 
@@ -51,21 +59,47 @@ test('list_changed_files: có file thay đổi, bỏ lock/dist/binary, kèm +/-'
   assert.deepEqual(files.map((entry) => entry.file).sort(), ['src/file1.ts', 'src/file2.ts']);
 });
 
-test('read_file: đọc file ở head, cắt tối đa 400 dòng và báo', async (t) => {
+test('read_file: đọc file ở head, cắt tối đa 150 dòng/12000 ký tự và báo', async (t) => {
   const { tools } = await setup(t, { files: 1 });
   const head = await tools.read_file({ path: 'src/file1.ts', from: 1, to: 100 });
   assert.match(head, /src\/file1\.ts \(dòng 1-3\/3\)/);
   assert.match(head, /2: export const value1b = 2;/);
+  assert.doesNotMatch(head, /\[đã cắt/);
 
   const capped = await tools.read_file({ path: 'src/big.ts', from: 1, to: 999 });
-  assert.match(capped, /^.*\(dòng 1-400\/450\)/);
-  assert.match(capped, /400: line 400/);
-  assert.doesNotMatch(capped, /401: line 401/);
-  assert.match(capped, /cắt về tối đa 400 dòng/);
+  assert.match(capped, /^.*\(dòng 1-150\/450\)/);
+  assert.match(capped, /150: line 150/);
+  assert.doesNotMatch(capped, /151: line 151/);
+  assert.match(capped, /\[đã cắt: dòng 1-150; gọi lại với from\/to\] \(tổng 450 dòng\)/);
 
   const tail = await tools.read_file('src/big.ts', 401, 500);
   assert.match(tail, /\(dòng 401-450\/450\)/);
   assert.match(tail, /450: line 450/);
+  assert.doesNotMatch(tail, /\[đã cắt/);
+});
+
+test('read_file mặc định: quanh hunk file thay đổi, 150 dòng đầu file không đổi', async (t) => {
+  const { tools } = await setup(t, { files: 1, changeBig: true });
+  const changedDefault = await tools.read_file({ path: 'src/file1.ts' });
+  assert.match(changedDefault, /\(dòng 1-3\/3\)/);
+
+  const bigDefault = await tools.read_file({ path: 'src/big.ts' });
+  const window = /\(dòng (\d+)-(\d+)\/453\)/.exec(bigDefault);
+  assert.ok(window, `thiếu cửa sổ dòng trong: ${bigDefault.slice(0, 80)}`);
+  assert.ok(Number(window[1]) > 300, `cửa sổ phải quanh hunk cuối, nhận ${window[1]}`);
+  assert.match(bigDefault, /appended 453/);
+
+  const { tools: unchanged } = await setup(t, { files: 1 });
+  const unchangedDefault = await unchanged.read_file({ path: 'src/big.ts' });
+  assert.match(unchangedDefault, /\(dòng 1-150\/450\)/);
+  assert.match(unchangedDefault, /\[đã cắt: dòng 1-150; gọi lại với from\/to\] \(tổng 450 dòng\)/);
+});
+
+test('read_file: trần ký tự mỗi lần gọi cũng cắt kèm ghi chú', async (t) => {
+  const { tools } = await setup(t, { files: 1 }, { maxReadChars: 200 });
+  const text = await tools.read_file({ path: 'src/big.ts', from: 1, to: 100 });
+  assert.match(text, /\[đã cắt: dòng 1-\d+; gọi lại với from\/to\] \(tổng 450 dòng\)/);
+  assert.ok(text.length < 400, `output phải bị cắt theo ký tự, nhận ${text.length}`);
 });
 
 test('read_file/grep/git_show chặn path traversal, tuyệt đối, symlink, .git', async (t) => {
@@ -91,18 +125,18 @@ test('không đọc được nội dung ngoài repo qua ../ (không chỉ dựa 
   await assert.rejects(() => tools.read_file({ path: 'src/link-out' }), 'đọc được symlink ra ngoài');
 });
 
-test('grep giới hạn 200 dòng khớp và lọc theo path_glob', async (t) => {
+test('grep giới hạn 60 dòng khớp và lọc theo path_glob', async (t) => {
   const { tools } = await setup(t, { files: 2 });
   const result = await tools.grep({ pattern: 'value', path_glob: 'src/file2.ts' });
   assert.match(result, /src\/file2\.ts:2:/);
   assert.doesNotMatch(result, /src\/file1\.ts/);
 
   const many = await tools.grep({ pattern: 'line', path_glob: 'src/big.ts' });
-  assert.equal(many.split('\n').filter((line) => /^src\/big\.ts:\d+:/.test(line)).length, 200);
-  assert.match(many, /cắt về tối đa 200 dòng/);
+  assert.equal(many.split('\n').filter((line) => /^src\/big\.ts:\d+:/.test(line)).length, 60);
+  assert.match(many, /\[đã cắt: hiển thị 60\/450 dòng khớp/);
 });
 
-test('git_show: chỉ nhận base/head, rev lạ bị từ chối', async (t) => {
+test('git_show: chỉ nhận base/head, rev lạ bị từ chối, cắt 200 dòng kèm ghi chú', async (t) => {
   const { repo, tools } = await setup(t, { files: 1 });
   const baseText = await tools.git_show({ rev: repo.base, path: 'src/file1.ts' });
   const headText = await tools.git_show({ rev: repo.head, path: 'src/file1.ts' });
@@ -110,10 +144,56 @@ test('git_show: chỉ nhận base/head, rev lạ bị từ chối', async (t) =>
   assert.doesNotMatch(baseText, /value1b/);
   assert.match(headText, /value1b/);
 
+  const shown = await tools.git_show({ rev: repo.head, path: 'src/big.ts' });
+  assert.match(shown, /^line 1\nline 2/m);
+  assert.match(shown, /line 200/);
+  assert.doesNotMatch(shown, /line 201/);
+  assert.match(shown, /\[đã cắt: hiển thị 200\//);
+
   await assert.rejects(
     () => tools.git_show({ rev: 'bogus000', path: 'src/file1.ts' }),
     /rev phải là base .* hoặc head/,
   );
+});
+
+test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'dystopia-sandbox-env-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const script = path.join(dir, 'sandbox-exec.sh');
+  await writeFile(
+    script,
+    '#!/usr/bin/env bash\nset -euo pipefail\nenv > "$(dirname "$0")/env.txt"\nexit 0\n',
+  );
+  await chmod(script, 0o755);
+
+  const fakeKey = 'fake-key-SANDBOX-4b1e';
+  const fakeToken = 'fake-token-SANDBOX-9c2d';
+  const runner = createSandboxRunner({
+    repo: dir,
+    script,
+    env: {
+      ...process.env,
+      COMMANDCODE_API_KEY: fakeKey,
+      OCR_LLM_TOKEN: fakeToken,
+      GIT_AUTHOR_NAME: 'sandbox-test',
+      CODER_SANDBOX_MODE: 'read-only',
+      DYSTOPIA_UNRELATED: 'bo',
+    },
+  });
+  const result = await runner('true');
+  assert.equal(result.status, 0, result.stderr);
+
+  const seen = await readFile(path.join(dir, 'env.txt'), 'utf8');
+  assert.ok(!seen.includes(fakeKey), 'lọt giá trị COMMANDCODE_API_KEY vào sandbox');
+  assert.ok(!seen.includes(fakeToken), 'lọt giá trị OCR_LLM_TOKEN vào sandbox');
+  assert.ok(!seen.includes('COMMANDCODE_API_KEY'), 'lọt tên COMMANDCODE_API_KEY vào sandbox');
+  assert.ok(!seen.includes('OCR_LLM_TOKEN'), 'lọt tên OCR_LLM_TOKEN vào sandbox');
+  assert.ok(!seen.includes('DYSTOPIA_UNRELATED'), 'lọt biến ngoài allowlist vào sandbox');
+  assert.match(seen, /^PATH=/m);
+  assert.match(seen, /^HOME=/m);
+  assert.match(seen, /^GIT_AUTHOR_NAME=sandbox-test$/m);
+  assert.match(seen, /^CODER_SANDBOX_MODE=read-only$/m);
+  assert.match(seen, new RegExp(`^CODER_WORKDIR=${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
 });
 
 test('loadIgnorePatterns: mặc định + rules-overlay/ignore.txt', async (t) => {

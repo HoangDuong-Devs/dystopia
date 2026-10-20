@@ -109,25 +109,57 @@ test('max-tool-calls: chạm giới hạn → truncated, findings trước đó 
   assert.equal(state.disposed, 1);
 });
 
-test('max-tokens + phase-split: vượt ngân sách pha file → truncated', async (t) => {
+test('ngân sách dự phòng report: ngừng đọc, lượt cuối vẫn giữ finding', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
-  let toolBlocked = false;
-  const { factory } = fakeDriverFactory(async (options) => {
-    options.onUsage({ tokens_in: 600, tokens_out: 50 });
-    try {
-      await options.tools.read_file({ path: 'src/file1.ts' });
-    } catch (error) {
-      toolBlocked = error.code === 'NATIVE_TRUNCATED';
+  let reserveMessage = null;
+  let prompts = 0;
+  let finalTurn = false;
+  const { factory } = fakeDriverFactory(async (options, ctx) => {
+    prompts += 1;
+    if (ctx.text?.includes('dự phòng cho việc báo cáo')) {
+      finalTurn = true;
+      await options.tools.report_finding(validFinding());
+      return;
     }
+    options.onUsage({ tokens_in: 450, tokens_out: 0 });
+    reserveMessage = await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
   });
 
   const result = await review(optionsFor(repo, factory, { maxTokens: 1000, phaseSplit: 0.5 }));
 
-  assert.equal(toolBlocked, true);
+  assert.equal(reserveMessage, 'hết ngân sách, hãy report_finding ngay');
+  assert.equal(prompts, 2);
+  assert.equal(finalTurn, true);
+  assert.equal(result.findings.length, 1);
   assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
-  assert.equal(result.meta.tokens_in, 600);
-  assert.equal(result.meta.tokens_out, 50);
-  assert.equal(result.meta.phases.file.tokens_in, 600);
+  assert.equal(result.meta.tokens_in, 450);
+  assert.equal(result.meta.tokens_out, 0);
+  assert.equal(result.meta.phases.file.tokens_in, 450);
+});
+
+test('chạm maxToolCalls-2: ngừng đọc, gửi lượt cuối để report', async (t) => {
+  const repo = await makeNativeRepo(t, { files: 1 });
+  let blocked = null;
+  let finalTurn = false;
+  const { factory } = fakeDriverFactory(async (options, ctx) => {
+    if (ctx.text?.includes('dự phòng cho việc báo cáo')) {
+      finalTurn = true;
+      await options.tools.report_finding(validFinding());
+      return;
+    }
+    for (let index = 0; index < 3; index += 1) {
+      await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
+    }
+    blocked = await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
+  });
+
+  const result = await review(optionsFor(repo, factory, { maxToolCalls: 5, maxTokens: 10_000 }));
+
+  assert.equal(blocked, 'hết ngân sách, hãy report_finding ngay');
+  assert.equal(finalTurn, true);
+  assert.equal(result.findings.length, 1);
+  assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
+  assert.equal(result.meta.tool_calls, 4);
 });
 
 test('splitBudget: pha file 70%, phần còn lại để dành pha tổng, chia đều', () => {
