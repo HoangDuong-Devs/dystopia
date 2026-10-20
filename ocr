@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# OCR (OpenCodeReview) cho FireMoth: nạp key, map sang OCR_LLM_*, mặc định JSON cho review.
+set -euo pipefail
+OCR_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ENV_FILE="${OCR_ENV_FILE:-$OCR_HOME/.env}"
+if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+BIN="$OCR_HOME/bin/opencodereview"
+[ -x "$BIN" ] || { echo "ocr: chưa build, chạy $OCR_HOME/install.sh" >&2; exit 127; }
+if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
+  export OCR_LLM_TOKEN="$COMMANDCODE_API_KEY"
+fi
+export OCR_LLM_URL="${OCR_LLM_URL:-https://api.commandcode.ai/provider/v1}"
+export OCR_LLM_PROTOCOL="${OCR_LLM_PROTOCOL:-openai}"
+export OCR_LLM_MODEL="${OCR_LLM_MODEL:-deepseek/deepseek-v4.1-flash-fast}"
+unset COMMANDCODE_API_KEY
+OVERLAY="$OCR_HOME/rules-overlay/rule.json"
+add_rule=()
+case "${1:-}" in review|r|scan)
+  if [ -f "$OVERLAY" ]; then
+    has_rule=0; for a in "$@"; do case "$a" in --rule|--rule=*) has_rule=1;; esac; done
+    [ $has_rule = 0 ] && add_rule=(--rule "$OVERLAY")
+  fi;;
+esac
+case "${1:-}" in review|r)
+  has_fmt=0
+  for a in "$@"; do case "$a" in --format|--format=*|-f|-f=*) has_fmt=1;; esac; done
+  if [ $has_fmt = 0 ]; then shift; exec "$BIN" review --format json "${add_rule[@]}" "$@"; fi;;
+esac
+if [ ${#add_rule[@]} -gt 0 ]; then cmd="$1"; shift; exec "$BIN" "$cmd" "${add_rule[@]}" "$@"; fi
+exec "$BIN" "$@"
