@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dystopia (Harmonica của Kosma): review code cho FireMoth, xây trên OpenCodeReview (alibaba). Nạp key, map sang OCR_LLM_*, mặc định JSON.
+# Dystopia (công cụ review của Kosma): review code cho FireMoth, xây trên OpenCodeReview (alibaba). Nạp key, map sang OCR_LLM_*, mặc định JSON.
 set -euo pipefail
 DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ENV_FILE="${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}"
