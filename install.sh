@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build OpenCodeReview vào bin/ và tự kiểm. Không sudo, không sửa clone upstream.
 set -uo pipefail
-OCR_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+HARMONY_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SRC="${OCR_SRC:-$HOME/firemoth/tools/opencodereview}"
 CODER_ENV="${CODER_ENV:-$HOME/firemoth/tools/coder/.env}"
 fail=0
@@ -19,24 +19,24 @@ OCR_REF="${OCR_REF:-9867a3d}"
 FULL="$(git -C "$SRC" rev-parse HEAD 2>/dev/null)"
 case "$FULL" in "$OCR_REF"*) ok "nguồn: $SRC @ $COMMIT (đúng ref ghim $OCR_REF)";;
   *) bad "nguồn ở $COMMIT, khác ref ghim $OCR_REF. Không tự checkout; đặt OCR_REF hoặc đưa clone về đúng ref.";; esac
-mkdir -p "$OCR_HOME/bin"
+mkdir -p "$HARMONY_HOME/bin"
 if (cd "$SRC" && GOFLAGS=-buildvcs=false CGO_ENABLED=0 "$GO" build \
     -ldflags "-X main.Version=v0.0.0-$COMMIT -X main.GitCommit=$COMMIT -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o "$OCR_HOME/bin/opencodereview" ./cmd/opencodereview); then ok "build: bin/opencodereview"
+    -o "$HARMONY_HOME/bin/opencodereview" ./cmd/opencodereview); then ok "build: bin/opencodereview"
 else bad "build lỗi"; fi
 if [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then warn "clone upstream có thay đổi chưa commit"; else ok "clone upstream sạch"; fi
-if [ ! -f "$OCR_HOME/.env" ]; then
-  cp "$OCR_HOME/.env.example" "$OCR_HOME/.env"
+if [ ! -f "$HARMONY_HOME/.env" ]; then
+  cp "$HARMONY_HOME/.env.example" "$HARMONY_HOME/.env"
   if [ -f "$CODER_ENV" ] && grep -q '^COMMANDCODE_API_KEY=.' "$CODER_ENV"; then
-    grep -v '^COMMANDCODE_API_KEY=' "$OCR_HOME/.env" > "$OCR_HOME/.env.tmp"
-    grep '^COMMANDCODE_API_KEY=' "$CODER_ENV" >> "$OCR_HOME/.env.tmp"
-    mv "$OCR_HOME/.env.tmp" "$OCR_HOME/.env"; ok ".env tạo mới, key chép từ coder/.env"
+    grep -v '^COMMANDCODE_API_KEY=' "$HARMONY_HOME/.env" > "$HARMONY_HOME/.env.tmp"
+    grep '^COMMANDCODE_API_KEY=' "$CODER_ENV" >> "$HARMONY_HOME/.env.tmp"
+    mv "$HARMONY_HOME/.env.tmp" "$HARMONY_HOME/.env"; ok ".env tạo mới, key chép từ coder/.env"
   else warn ".env tạo mới nhưng chưa có COMMANDCODE_API_KEY"; fi
 else ok ".env đã có"; fi
-[ -f "$OCR_HOME/rules-overlay/rule.json" ] && ok "rules-overlay/rule.json sẽ được truyền qua --rule" || ok "rules-overlay trống, dùng luật upstream"
-chmod 600 "$OCR_HOME/.env"; chmod 755 "$OCR_HOME/ocr" "$OCR_HOME/install.sh"
-grep -q '^COMMANDCODE_API_KEY=.' "$OCR_HOME/.env" || grep -q '^OCR_LLM_TOKEN=.' "$OCR_HOME/.env" \
+[ -f "$HARMONY_HOME/rules-overlay/rule.json" ] && ok "rules-overlay/rule.json sẽ được truyền qua --rule" || ok "rules-overlay trống, dùng luật upstream"
+chmod 600 "$HARMONY_HOME/.env"; chmod 755 "$HARMONY_HOME/harmony" "$HARMONY_HOME/install.sh"
+grep -q '^COMMANDCODE_API_KEY=.' "$HARMONY_HOME/.env" || grep -q '^OCR_LLM_TOKEN=.' "$HARMONY_HOME/.env" \
   && ok "key có trong .env (không in)" || warn "chưa có key trong .env"
-if v="$("$OCR_HOME/ocr" --version 2>&1)"; then ok "ocr --version: $(echo "$v" | head -1)"
-elif "$OCR_HOME/ocr" --help >/dev/null 2>&1; then ok "ocr --help chạy được"; else bad "ocr không chạy được"; fi
+if v="$("$HARMONY_HOME/harmony" --version 2>&1)"; then ok "harmony --version: $(echo "$v" | head -1)"
+elif "$HARMONY_HOME/harmony" --help >/dev/null 2>&1; then ok "harmony --help chạy được"; else bad "harmony không chạy được"; fi
 [ $fail = 0 ] && echo "Kết quả: sẵn sàng." || { echo "Kết quả: chưa sẵn sàng."; exit 1; }
