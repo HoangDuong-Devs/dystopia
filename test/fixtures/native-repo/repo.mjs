@@ -41,6 +41,8 @@ export async function makeNativeRepo(t, options = {}) {
   await writeFile(path.join(dir, 'package-lock.json'), '{"lockfileVersion": 3}\n');
   await writeFile(path.join(dir, 'dist', 'bundle.js'), 'console.log(1);\n');
   await writeFile(path.join(dir, 'assets', 'data.bin'), Buffer.from([0, 0, 1, 2, 3]));
+  // Symlink trỏ ra ngoài repo, được commit vào cây để test chặn symlink ở head.
+  await symlink(path.join('..', 'outside', 'secret.txt'), path.join(dir, 'src', 'link-out'));
 
   await git(dir, ['add', '.']);
   await git(dir, ['commit', '-qm', 'base']);
@@ -67,7 +69,6 @@ export async function makeNativeRepo(t, options = {}) {
   const outside = path.join(root, 'outside');
   await mkdir(outside, { recursive: true });
   await writeFile(path.join(outside, 'secret.txt'), 'secret\n');
-  await symlink(path.join(outside, 'secret.txt'), path.join(dir, 'src', 'link-out'));
 
   return { root, dir, base, head, files, big: 'src/big.ts', outside };
 }

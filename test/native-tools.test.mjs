@@ -5,15 +5,15 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { createSandboxRunner, createTools, loadIgnorePatterns } from '../lib/engine/native/tools.mjs';
-import { makeNativeRepo } from './fixtures/native-repo/repo.mjs';
+import { createGitRunner, createSandboxRunner, createTools, loadIgnorePatterns, resolveCommit } from '../lib/engine/native/tools.mjs';
+import { makeNativeRepo, git as gitCli } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -154,6 +154,64 @@ test('git_show: chỉ nhận base/head, rev lạ bị từ chối, cắt 200 dò
     () => tools.git_show({ rev: 'bogus000', path: 'src/file1.ts' }),
     /rev phải là base .* hoặc head/,
   );
+});
+
+test('read_file/grep đọc commit head qua git, độc lập checkout ở đĩa', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'dystopia-head-tree-'));
+  const dir = path.join(root, 'repo');
+  await mkdir(dir, { recursive: true });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await gitCli(dir, ['init', '-q']);
+  await gitCli(dir, ['config', 'user.email', 'test@example.invalid']);
+  await gitCli(dir, ['config', 'user.name', 'Test']);
+  await writeFile(path.join(dir, 'x.ts'), 'old\n');
+  await writeFile(path.join(dir, 'gone.ts'), 'gone\n');
+  await gitCli(dir, ['add', '.']);
+  await gitCli(dir, ['commit', '-qm', 'A']);
+  const commitA = await gitCli(dir, ['rev-parse', 'HEAD']);
+
+  await writeFile(path.join(dir, 'x.ts'), 'new\n');
+  await rm(path.join(dir, 'gone.ts'));
+  await writeFile(path.join(dir, 'new.ts'), 'brand new\n');
+  await symlink(path.join('..', 'outside', 'secret.txt'), path.join(dir, 'link-out'));
+  await gitCli(dir, ['add', '-A']);
+  await gitCli(dir, ['commit', '-qm', 'B']);
+  const commitB = await gitCli(dir, ['rev-parse', 'HEAD']);
+  assert.equal(await resolveCommit(createGitRunner(localRunner(dir)), 'HEAD'), commitB);
+  assert.throws(
+    () => createTools({ repo: dir, base: commitA, head: 'HEAD', runner: localRunner(dir) }),
+    /sha đầy đủ/,
+  );
+
+  // Đĩa cố tình ở commit A: x.ts cũ, gone.ts còn, new.ts/link-out chưa có.
+  await gitCli(dir, ['checkout', '-q', commitA]);
+  assert.equal(await readFile(path.join(dir, 'x.ts'), 'utf8'), 'old\n');
+  assert.ok(existsSync(path.join(dir, 'gone.ts')));
+  assert.ok(!existsSync(path.join(dir, 'new.ts')));
+
+  const tools = createTools({ repo: dir, base: commitA, head: commitB, runner: localRunner(dir) });
+
+  const x = await tools.read_file({ path: 'x.ts' });
+  assert.match(x, /1: new/);
+  assert.doesNotMatch(x, /old/);
+
+  const added = await tools.read_file({ path: 'new.ts' });
+  assert.match(added, /brand new/);
+
+  await assert.rejects(() => tools.read_file({ path: 'gone.ts' }), /không tìm thấy file trong/);
+
+  const found = await tools.grep({ pattern: 'new' });
+  assert.match(found, /^x\.ts:1:new$/m);
+  assert.doesNotMatch(found, /old/);
+
+  const traversal = ['../outside/secret.txt', 'src/../../x.ts', '/etc/passwd', '.git/config'];
+  for (const bad of traversal) {
+    await assert.rejects(() => tools.read_file({ path: bad }), `read_file ${bad}`);
+    await assert.rejects(() => tools.grep({ pattern: 'new', path_glob: bad }), `grep ${bad}`);
+  }
+  await assert.rejects(() => tools.read_file({ path: 'link-out' }), /symlink/);
+  await assert.rejects(() => tools.grep({ pattern: 'new', path_glob: 'link-out/*' }), /symlink/);
 });
 
 test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) => {

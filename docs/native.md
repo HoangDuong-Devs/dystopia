@@ -65,13 +65,16 @@ dystopia models
 
 ## 3. Tool chỉ đọc
 
-`repo` là worktree đang ở revision **head**. Chỉ có đúng 5 tool:
+`repo` là worktree của `--dir`, nhưng **mọi tool đọc nội dung của commit head** qua git,
+không đọc file trên đĩa. Vì vậy checkout của `--dir` có thể đang ở commit khác head (ví dụ
+branch khác, commit cũ) mà kết quả vẫn đúng. Engine chuẩn hóa `--to` thành sha đầy đủ
+(`git rev-parse --verify <rev>^{commit}`) trước khi tạo tool; tool chỉ nhận sha đầy đủ.
 
 | Tool | Việc |
 |---|---|
-| `read_file(path, from?, to?)` | đọc tối đa **150 dòng** và **~12000 ký tự** mỗi lần; `from`/`to` là 1-based, bao gồm hai đầu. Không truyền dải thì mặc định đọc cửa sổ quanh hunk diff của file thay đổi (mỗi hunk ±40 dòng, gộp các cửa sổ chồng nhau) hoặc **150 dòng đầu** với file không đổi. Bị cắt thì kết quả có `[đã cắt: dòng X-Y; gọi lại với from/to]` kèm tổng số dòng |
+| `read_file(path, from?, to?)` | đọc nội dung file ở **head** bằng `git cat-file -p <head>:<path>`; tối đa **150 dòng** và **~12000 ký tự** mỗi lần; `from`/`to` là 1-based, bao gồm hai đầu. Không truyền dải thì mặc định đọc cửa sổ quanh hunk diff của file thay đổi (mỗi hunk ±40 dòng, gộp các cửa sổ chồng nhau) hoặc **150 dòng đầu** với file không đổi. Bị cắt thì kết quả có `[đã cắt: dòng X-Y; gọi lại với from/to]` kèm tổng số dòng |
 | `list_changed_files()` | `git diff --name-status` + `--numstat` base..head, kèm `+/-`; bỏ file lock/sinh tự động/binary |
-| `grep(pattern, path_glob)` | `git grep -n`, tối đa **60 dòng khớp** và **~8000 ký tự**, có ghi chú `[đã cắt: hiển thị X/Y dòng khớp; ...]` khi cắt |
+| `grep(pattern, path_glob)` | `git grep -n ... <head> -- <pathspec>`, bỏ tiền tố `<head>:` khỏi đường dẫn trong output; tối đa **60 dòng khớp** và **~8000 ký tự**, có ghi chú `[đã cắt: hiển thị X/Y dòng khớp; ...]` khi cắt |
 | `git_show(rev, path)` | chỉ nhận `rev` là base hoặc head; tối đa **200 dòng** và **~12000 ký tự**, có ghi chú khi cắt |
 | `report_finding(...)` | xem mục 4 |
 
@@ -79,15 +82,17 @@ Danh sách bỏ qua lấy từ `rules-overlay/ignore.txt` (nếu có) cộng m�
 `*.lock`, `package-lock.json`, `bun.lockb`, `dist/**`, `*.min.js`, và file binary nhận ra qua
 numstat `-`. File đã xoá ở head không vào danh sách review (không thể báo finding theo dòng head).
 
-Chặn đường dẫn cho mọi tool:
+Chặn đường dẫn cho mọi tool (kiểm theo **cây git của revision**, không theo đĩa):
 
 - từ chối đường dẫn tuyệt đối;
 - từ chối mọi đoạn `..` (kể cả khi chuẩn hóa vẫn nằm trong repo);
 - từ chối path có đoạn `.git`;
-- `realpath` sau khi giải symlink phải nằm trong `realpath(repo)`; symlink trỏ ra ngoài bị từ chối;
-- với glob của `grep`, các đoạn tĩnh trước ký tự glob cũng được kiểm symlink.
+- đường dẫn phải trỏ tới entry tồn tại trong cây head (`git cat-file -t`/`git ls-tree`), là
+  blob thường; thư mục, entry không tồn tại và mọi symlink trong cây đều bị từ chối;
+- symlink không bao giờ được đi theo ra đĩa;
+- với glob của `grep`, các đoạn tĩnh trước ký tự glob cũng được kiểm theo cây head.
 
-`read_file` đọc bằng `fs` trong tiến trình. Các lệnh git chạy qua
+Mọi lệnh git (kể cả `cat-file`/`ls-tree`/`grep` đọc nội dung head) chạy qua
 `$CODER_HOME/lib/sandbox-exec.sh '<lệnh git>'` với `CODER_WORKDIR=<repo>`: sandbox bwrap
 chỉ đọc của MTH, không mạng. Đây là **cách duy nhất** engine native còn dùng `CODER_HOME`.
 Engine không tự viết sandbox và không chạy lệnh nào khác ngoài git đọc.
@@ -260,7 +265,9 @@ node --test test/*.test.mjs
 - `test/native-tools.test.mjs`: path traversal/tuyệt đối/symlink/`.git`, `read_file` cắt 150
 dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `git_show` 200 dòng,
   env allowlist của `sandbox-exec` (không lọt key/token), `git_show` rev lạ, lọc file bỏ qua;
-  một test chạy thật qua `sandbox-exec` và tự skip khi thiếu `CODER_HOME`/bwrap.
+  test đọc head qua git khi checkout ở đĩa là commit cũ (`read_file`/`grep` trả nội dung head,
+  file đã xoá ở head bị từ chối); một test chạy thật qua `sandbox-exec` và tự skip khi thiếu
+  `CODER_HOME`/bwrap.
 - `test/native-finding.test.mjs`: từ chối severity sai, line ngoài head, file không đổi,
   evidence rỗng; agent sửa lại trong cùng lượt.
 - `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, ngân sách dự phòng

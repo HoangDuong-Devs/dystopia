@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import { createFindingCollector } from '../lib/engine/native/finding.mjs';
 import { review } from '../lib/engine/native/index.mjs';
+import { createTools } from '../lib/engine/native/tools.mjs';
 import { makeNativeRepo } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -44,7 +45,13 @@ function validFinding(overrides = {}) {
 
 test('report_finding từ chối severity sai, line ngoài head, file không đổi, evidence rỗng', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
-  const collector = createFindingCollector({ repo: repo.dir, changedFiles: ['src/file1.ts'] });
+  const tools = createTools({
+    repo: repo.dir,
+    base: repo.base,
+    head: repo.head,
+    runner: localRunner(repo.dir),
+  });
+  const collector = createFindingCollector({ headTree: tools.headTree, changedFiles: ['src/file1.ts'] });
 
   const cases = [
     [validFinding({ severity: 'high' }), /severity/],
