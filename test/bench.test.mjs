@@ -529,3 +529,62 @@ test('--case chỉ chạy case được chọn', async (t) => {
   assert.doesNotMatch(stdout, /^mot /m);
   assert.equal(tableRow(stdout, 'hai')[7], 'pass');
 });
+
+// OCR giả cho đường engine: chép fixture vào --output, không gọi mạng/LLM.
+const FAKE_OCR = `#!/usr/bin/env bash
+set -euo pipefail
+out=""; prev=""
+for a in "$@"; do
+  case "$prev" in --output|-o) out="$a";; esac
+  case "$a" in --output=*|-o=*) out="\${a#*=}";; esac
+  prev="$a"
+done
+[ -n "$out" ] || { echo "fake-ocr: thiếu --output" >&2; exit 2; }
+cp "$FAKE_OCR_FIXTURE" "$out"
+`;
+
+async function makeEngineBench(t, cases) {
+  const bench = await makeBench(t, cases, []);
+  const bin = path.join(bench.dir, 'fake-ocr');
+  await writeFile(bin, FAKE_OCR);
+  await chmod(bin, 0o755);
+  return { ...bench, bin };
+}
+
+function engineEnv(bench, extra = {}) {
+  const env = benchEnv(bench, {
+    DYSTOPIA_OCR_BIN: bench.bin,
+    FAKE_OCR_FIXTURE: path.join(FIXTURES, 'engine-basic.json'),
+    ...extra,
+  });
+  delete env.DYSTOPIA_BENCH_REVIEWER;
+  return env;
+}
+
+test('không có DYSTOPIA_BENCH_REVIEWER: bench gọi engine qua hợp đồng và ghi engine', async (t) => {
+  const repo = await makeRepo(t);
+  const bench = await makeEngineBench(t, { c: caseFor(repo) });
+
+  const { code, stdout } = await runBench([], engineEnv(bench));
+  assert.equal(code, 0);
+  assert.equal(stdout.split('\n')[0], 'engine: ocr');
+  assert.equal(tableRow(stdout, 'case1')[7], 'pass');
+
+  const files = (await readdir(path.join(bench.dir, 'results'))).sort();
+  const document = JSON.parse(await readFile(path.join(bench.dir, 'results', files[0]), 'utf8'));
+  assert.equal(document.engine, 'ocr');
+  assert.equal(document.cases[0].status, 'pass');
+  assert.equal(document.cases[0].runs[0].findings[0].line, 100);
+});
+
+test('bench --engine native → exit 64, nói rõ chưa có ở commit B', async (t) => {
+  const repo = await makeRepo(t);
+  const bench = await makeBench(t, { c: caseFor(repo) }, [reviewResult([finding()])]);
+  const env = benchEnv(bench);
+  delete env.DYSTOPIA_BENCH_REVIEWER;
+
+  const { code, stderr } = await runBench(['--engine', 'native'], env);
+  assert.equal(code, 64);
+  assert.match(stderr, /native/);
+  assert.match(stderr, /commit B/);
+});

@@ -2,6 +2,18 @@
 # Dystopia (công cụ review của Kosma): review code cho FireMoth, xây trên OpenCodeReview (alibaba). Nạp key, map sang OCR_LLM_*, mặc định JSON.
 set -euo pipefail
 DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+if [ "${1:-}" = --version ] || [ "${1:-}" = -V ]; then
+  # --version không cần .env, không cần binary OCR.
+  version="$(cat "$DYSTOPIA_HOME/VERSION" 2>/dev/null || true)"
+  [ -n "$version" ] || version="unknown"
+  if git -C "$DYSTOPIA_HOME" rev-parse --short HEAD >/dev/null 2>&1; then
+    revision="$(git -C "$DYSTOPIA_HOME" rev-parse --short HEAD)"
+  else
+    revision="nogit"
+  fi
+  printf 'dystopia %s (%s)\n' "$version" "$revision"
+  exit 0
+fi
 ENV_FILE="${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}"
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
 # bench không cần binary OCR: chạy thẳng module Node.
@@ -10,7 +22,6 @@ if [ "${1:-}" = bench ]; then
   exec node "$DYSTOPIA_HOME/lib/bench.mjs" "$@"
 fi
 BIN="${DYSTOPIA_OCR_BIN:-$DYSTOPIA_HOME/bin/opencodereview}"
-[ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $DYSTOPIA_HOME/install.sh" >&2; exit 127; }
 if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
   export OCR_LLM_TOKEN="$COMMANDCODE_API_KEY"
 fi
@@ -18,6 +29,14 @@ export OCR_LLM_URL="${OCR_LLM_URL:-https://api.commandcode.ai/provider/v1}"
 export OCR_LLM_PROTOCOL="${OCR_LLM_PROTOCOL:-openai}"
 export OCR_LLM_MODEL="${OCR_LLM_MODEL:-deepseek/deepseek-v4.1-flash-fast}"
 unset COMMANDCODE_API_KEY
+# review (trừ --raw và --format tự chọn) đi qua hợp đồng engine trong node.
+# Kiểm tra binary nằm trong adapter OCR nên vẫn giữ nguyên thông điệp/exit 127.
+case "${1:-}" in
+  review|r)
+    shift
+    exec node "$DYSTOPIA_HOME/lib/review.mjs" "$@";;
+  *) [ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $DYSTOPIA_HOME/install.sh" >&2; exit 127; };;
+esac
 OVERLAY="$DYSTOPIA_HOME/rules-overlay/rule.json"
 add_rule=()
 case "${1:-}" in review|r|scan)
@@ -26,62 +45,6 @@ case "${1:-}" in review|r|scan)
     [ $has_rule = 0 ] && add_rule=(--rule "$OVERLAY")
   fi;;
 esac
-case "${1:-}" in review|r)
-  shift
-  has_fmt=0; has_raw=0
-  for a in "$@"; do
-    case "$a" in
-      --format|--format=*|-f|-f=*) has_fmt=1;;
-      --raw) has_raw=1;;
-    esac
-  done
-  if [ $has_raw = 1 ]; then
-    # --raw: hành vi cũ, trả nguyên output OCR (bỏ cờ --raw của wrapper).
-    passthrough=()
-    for a in "$@"; do
-      case "$a" in --raw|--text) ;; *) passthrough+=("$a");; esac
-    done
-    if [ $has_fmt = 0 ]; then
-      exec "$BIN" review --format json "${add_rule[@]}" "${passthrough[@]}"
-    fi
-    exec "$BIN" review "${add_rule[@]}" "${passthrough[@]}"
-  fi
-  if [ $has_fmt = 1 ]; then
-    # Người gọi tự chọn format: tôn trọng, không chuẩn hóa.
-    exec "$BIN" review "${add_rule[@]}" "$@"
-  fi
-  # Mặc định: OCR ghi JSON thô vào file tạm, đo thời gian, rồi chuẩn hóa.
-  text=0; out=""; rest=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --text) text=1; shift;;
-      --output|-o)
-        [ $# -ge 2 ] || { echo "dystopia: $1 cần giá trị" >&2; exit 2; }
-        out="$2"; shift 2;;
-      --output=*) out="${1#--output=}"; shift;;
-      -o=*) out="${1#-o=}"; shift;;
-      *) rest+=("$1"); shift;;
-    esac
-  done
-  tmp="$(mktemp "${TMPDIR:-/tmp}/dystopia-XXXXXX.json")"
-  trap 'rm -f "$tmp"' EXIT
-  start_ns="$(date +%s%N)"
-  set +e
-  "$BIN" review --format json --output "$tmp" "${add_rule[@]}" "${rest[@]}" >&2
-  ocr_rc=$?
-  set -e
-  end_ns="$(date +%s%N)"
-  [ $ocr_rc -eq 0 ] || exit $ocr_rc
-  [ -s "$tmp" ] || { echo "dystopia: OCR không ghi output vào $tmp" >&2; exit 1; }
-  duration_ms=$(( (end_ns - start_ns) / 1000000 ))
-  norm_args=("$tmp" --duration-ms "$duration_ms")
-  if [ $text = 1 ]; then norm_args+=(--text); fi
-  if [ -n "$out" ]; then
-    node "$DYSTOPIA_HOME/lib/normalize.mjs" "${norm_args[@]}" > "$out"
-  else
-    node "$DYSTOPIA_HOME/lib/normalize.mjs" "${norm_args[@]}"
-  fi
-  exit 0;;
-esac
+
 if [ ${#add_rule[@]} -gt 0 ]; then cmd="$1"; shift; exec "$BIN" "$cmd" "${add_rule[@]}" "$@"; fi
 exec "$BIN" "$@"

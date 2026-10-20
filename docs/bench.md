@@ -69,11 +69,11 @@ toàn, không cần kiểm các trường còn lại; vẫn xuất hiện trong 
 ## 3. Cách chạy một case
 
 1. Tạo worktree detached: `git -C <repo> worktree add --detach /tmp/fm-fx-bench-<id>-<pid> <head>`.
-2. Chạy reviewer trong worktree với `--from <base> --to <head> --output <file tạm>`.
-   Reviewer mặc định là `<repo Dystopia>/dystopia review`. Ghi đè bằng
-   `DYSTOPIA_BENCH_REVIEWER` (đường dẫn một lệnh nhận cùng tham số và ghi JSON đã chuẩn hóa
-   vào `--output`); dùng cho test, không gọi LLM/OCR thật.
-3. Đọc JSON `{ meta, findings }` do reviewer ghi ra (schema ở `docs/ocr-output.md`).
+2. Gọi engine qua hợp đồng chung (`docs/engine.md`) trong worktree: `review({ repo: worktree,
+   base, head })`, mặc định engine `ocr`. Nếu đặt `DYSTOPIA_BENCH_REVIEWER`, bench chạy lệnh
+   đó thay cho engine (cùng tham số `review --from <base> --to <head> --output <file tạm>`,
+   ghi JSON đã chuẩn hóa vào `--output`); dùng cho test, không gọi LLM/OCR thật.
+3. Đọc JSON `{ meta, findings }` do engine/reviewer trả về (schema ở `docs/ocr-output.md`).
 4. Luôn `git worktree remove --force` trong `finally`, kể cả khi reviewer lỗi.
 
 Reviewer lỗi (exit ≠ 0, output hỏng JSON, thiếu mảng `findings`) → lần chạy đó ghi `error`,
@@ -105,13 +105,14 @@ Case không có `expect_bugs` vẫn pass nếu không có finding cấm và khô
 ## 5. Tham số dòng lệnh
 
 ```
-dystopia bench [--runs N] [--case <id>]...
+dystopia bench [--runs N] [--case <id>]... [--engine <tên>]
 ```
 
 | Tham số | Ý nghĩa |
 |---|---|
 | `--runs N` | số lần chạy mỗi case, số nguyên ≥ 1 (mặc định 1) |
 | `--case <id>` | chỉ chạy case có id này; lặp lại được nhiều lần |
+| `--engine <tên>` | engine review, mặc định `ocr`; tên lạ hoặc `native` chưa có → exit 64 |
 
 Tham số sai (ví dụ `--runs 0`, `--runs abc`) hoặc cấu hình case sai → in lỗi rõ ràng và exit 64,
 trước khi chạy bất kỳ case nào.
@@ -119,9 +120,11 @@ trước khi chạy bất kỳ case nào.
 ## 6. Bảng kết quả
 
 ```
+engine: ocr
 case | bug trúng/tổng | tỉ lệ từng bug | finding cấm | nên sửa | tokens | thời gian | kết quả
 ```
 
+- Dòng đầu `engine: <tên>`: engine đã dùng cho lần chạy (cùng giá trị ghi vào file kết quả).
 - `bug trúng/tổng`: số bug đạt `min_hit_rate` / tổng số bug.
 - `tỉ lệ từng bug`: dạng `id=0.67, id2=1`.
 - `finding cấm`, `nên sửa`: cộng qua các lần chạy.
@@ -144,6 +147,7 @@ Mỗi lần chạy ghi một JSON vào `results/`:
 ```json
 {
   "started_at": "2026-01-01T00:00:00.000Z",
+  "engine": "ocr",
   "dystopia_head": "1be201e",
   "runs": 3,
   "cases": [
@@ -172,4 +176,5 @@ Mỗi lần chạy ghi một JSON vào `results/`:
 ```
 
 `config` là cấu hình đã chuẩn hóa (điền mặc định). `findings` trong từng lần chạy được rút gọn
-còn `file`, `line`, `severity`, `rank`. Case `skipped` có `runs: []`.
+còn `file`, `line`, `severity`, `rank`. Case `skipped` có `runs: []`. `engine` ở cấp tài liệu
+là engine đã chạy (`ocr` hoặc tên engine truyền qua `--engine`).
