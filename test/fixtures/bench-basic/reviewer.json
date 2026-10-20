@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "tool": "dystopia",
+    "version": "fake",
+    "base": "__BASE__",
+    "head": "__HEAD__",
+    "model": "fake/model-bench",
+    "tokens_in": 100,
+    "tokens_out": 20,
+    "duration_ms": 5
+  },
+  "findings": [
+    {
+      "severity": "nên sửa",
+      "file": "src/file1.ts",
+      "line": 108,
+      "end_line": 109,
+      "rule": "logic",
+      "claim": "Finding giả nằm trong khoảng đệm 10 dòng",
+      "evidence": "code();",
+      "confidence": null
+    }
+  ]
+}

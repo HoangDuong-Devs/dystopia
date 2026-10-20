@@ -1,0 +1,17 @@
+{
+  "id": "bench-basic",
+  "repo": "__REPO__",
+  "base": "__BASE__",
+  "head": "__HEAD__",
+  "expect_bugs": [
+    {
+      "id": "bug-boundary",
+      "file": "src/file1.ts",
+      "line_from": 100,
+      "line_to": 105,
+      "desc": "Bug ở biên khoảng dòng, dữ liệu giả."
+    }
+  ],
+  "max_rank": 5,
+  "forbid_severity": ["chặn"]
+}

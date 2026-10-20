@@ -4,6 +4,11 @@ set -euo pipefail
 DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ENV_FILE="${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}"
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+# bench không cần binary OCR: chạy thẳng module Node.
+if [ "${1:-}" = bench ]; then
+  shift
+  exec node "$DYSTOPIA_HOME/lib/bench.mjs" "$@"
+fi
 BIN="${DYSTOPIA_OCR_BIN:-$DYSTOPIA_HOME/bin/opencodereview}"
 [ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $DYSTOPIA_HOME/install.sh" >&2; exit 127; }
 if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
