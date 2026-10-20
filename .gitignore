@@ -1,3 +1,7 @@
 .env
-.env.tmp
+.env.*
+!.env.example
 bin/
+dist/
+build/
+*.json.out

@@ -1,0 +1,8 @@
+Dystopia
+A thin wrapper around OpenCodeReview (https://github.com/alibaba/open-code-review),
+pinned at commit 9867a3d. Dystopia does not vendor or modify the upstream source;
+install.sh builds it from a local clone.
+
+OpenCodeReview is licensed under the Apache License, Version 2.0.
+Copyright 2026 alibaba/open-code-review Contributors
+http://www.apache.org/licenses/LICENSE-2.0
