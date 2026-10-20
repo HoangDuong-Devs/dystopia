@@ -5,3 +5,7 @@ bin/
 dist/
 build/
 *.json.out
+# Pi tự tạo khi chạy native, không commit
+agent/auth.json
+agent/models-store.json
+agent/sessions/

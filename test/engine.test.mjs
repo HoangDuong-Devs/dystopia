@@ -85,6 +85,7 @@ async function makeFakeOcr(t) {
   await chmod(bin, 0o755);
   const envFile = path.join(dir, 'empty.env');
   await writeFile(envFile, '');
+  await chmod(envFile, 0o600);
   return { dir, bin, envFile, argsFile: path.join(dir, 'args.txt'), cwdFile: path.join(dir, 'cwd.txt') };
 }
 

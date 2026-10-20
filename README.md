@@ -7,7 +7,7 @@ It only produces findings; approval stays with the reviewer.
 ## Install
 1. Clone `alibaba/open-code-review` at `9867a3d` (default location `$HOME/firemoth/tools/opencodereview`, override with `OCR_SRC`; ref override with `OCR_REF`). Treat it as read-only.
 2. Need Go >= 1.21 (or set `GO_BIN`).
-3. Run `./install.sh`. It builds `bin/opencodereview`, creates `.env` from `.env.example`, and prints OK/WARN/FAIL lines ending with `Kết quả: sẵn sàng.`
+3. Run `./install.sh`. It builds `bin/opencodereview`, creates `.env` from `.env.example` with mode 600 (it never copies a key from MTH) and prints OK/WARN/FAIL lines ending with `Kết quả: sẵn sàng.` Fill in `COMMANDCODE_API_KEY` yourself.
 
 ## Usage
 Run inside the repo to review:
@@ -25,7 +25,7 @@ dystopia review --format text                          # explicit format, normal
 dystopia bench                                        # run every benchmark case once
 dystopia bench --runs 3 --case aeb2fc6                 # repeat runs, select cases
 dystopia bench --engine ocr                            # engine used by the benchmark
-dystopia models                                        # native models available from the MTH config
+dystopia models                                        # native models from Dystopia's agent/models.json
 dystopia --version                                     # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 By default `review` runs the `ocr` engine: OCR with `--format json` into a temp file, normalized
@@ -40,11 +40,15 @@ The `native` engine uses the Pi core in-process instead of the OCR binary. Commi
 file phase only: one agent turn per changed file, read-only tools (`read_file`,
 `list_changed_files`, `grep`, `git_show`), `report_finding` validated on every call, and
 `--max-tool-calls` / `--max-tokens` / `--phase-split` / `--concurrency` limits with
-`meta.truncated`. Native requires `--from` and `--to` (no `-c`) and finds the MTH install via
-`CODER_HOME` (no default; missing → exit 64). Models come from `$CODER_HOME/coder models`;
-`DYSTOPIA_MODEL` selects one by name and the default is a model different from the coding
-model (`CODER_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
-models. Git reads run through `$CODER_HOME/lib/sandbox-exec.sh`. The system prompt is a
+`meta.truncated`. Native requires `--from` and `--to` (no `-c`). Its key and model config are its
+own: the launcher reads `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}` (mode broader than 600 → exit
+64) and the agent dir is `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`; it never uses
+`$CODER_HOME/agent` or MTH's `.env`. Models come from `agent/models.json` (provider
+`commandcode`; `apiKey` holds only the env var name `COMMANDCODE_API_KEY`); `DYSTOPIA_MODEL`
+selects one by name and the default is a model different from the coding model
+(`CODER_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
+models. `CODER_HOME` is still required but only to locate
+`$CODER_HOME/lib/sandbox-exec.sh`; git reads run through it. The system prompt is a
 temporary placeholder (`lib/engine/native/prompts/placeholder.md`): the summary phase,
 deduplication and Kosma's real prompt/rules are commit C. See `docs/native.md`.
 
@@ -67,16 +71,22 @@ arguments. See `docs/bench.md` for the case schema and scoring rules.
 ## Environment (`.env`, or another file via `DYSTOPIA_ENV_FILE`)
 | Variable | Meaning |
 |---|---|
-| `COMMANDCODE_API_KEY` | API key, mapped to `OCR_LLM_TOKEN` |
+| `DYSTOPIA_HOME` | Dystopia data/config directory; defaults to the install directory (exported to node children) |
+| `DYSTOPIA_ENV_FILE` | env file; defaults to `$DYSTOPIA_HOME/.env` (mode must not be broader than 600) |
+| `DYSTOPIA_AGENT_DIR` | Dystopia agent dir; defaults to `$DYSTOPIA_HOME/agent` |
+| `COMMANDCODE_API_KEY` | API key; native reads it directly, OCR gets it mapped to `OCR_LLM_TOKEN` |
 | `OCR_LLM_MODEL` | model (default `deepseek/deepseek-v4.1-flash-fast`) |
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | provider overrides (default CommandCode, OpenAI-compatible) |
 | `DYSTOPIA_BENCH_DIR` | benchmark data directory (default `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | command used by `bench` instead of `dystopia review` |
-| `CODER_HOME` | MTH install directory (required by the native engine: `coder models`, `agent`, `lib/sandbox-exec.sh`) |
-| `DYSTOPIA_MODEL` | native model to use; must exist in the MTH model list |
+| `CODER_HOME` | MTH install directory, only to locate `$CODER_HOME/lib/sandbox-exec.sh` (required by the native engine) |
+| `DYSTOPIA_MODEL` | native model to use; must exist in Dystopia's `agent/models.json` |
 | `DYSTOPIA_PI_SDK` | override the Pi SDK `dist/index.js` path |
 | `DYSTOPIA_NATIVE_DRIVER` | test-only `.mjs` fake driver (never used in normal runs) |
 
-Never commit `.env`. See `GUIDE.md` (Vietnamese) for details, `docs/engine.md` for the engine
+Never commit `.env`, and never print it or the key. **Key rotation on fc1 updates two copies:**
+MTH's `.env` and Dystopia's `$DYSTOPIA_HOME/.env`. Variable names: `COMMANDCODE_API_KEY`,
+`OCR_LLM_TOKEN`, `OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`,
+`CODER_HOME`. See `GUIDE.md` (Vietnamese) for details, `docs/engine.md` for the engine
 contract, `docs/native.md` for the native engine, `docs/ocr-output.md` for the output schema
 and `NOTICE` for attribution.

@@ -1,10 +1,10 @@
-// Test cấu hình MTH cho engine native: CODER_HOME bắt buộc, parse `coder models`,
-// chọn model mặc định khác model viết code, DYSTOPIA_MODEL lạ → exit 64,
-// `dystopia models`. Dùng coder giả, không đọc auth/.env thật.
+// Test cấu hình model riêng của Dystopia: đọc agent/models.json (không chạy
+// `coder models`, không cần CODER_HOME), chọn model mặc định khác model viết
+// code, DYSTOPIA_MODEL lạ → exit 64, `dystopia models`. Không đọc auth/.env thật.
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -13,11 +13,9 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
-  coderBinary,
   formatModels,
   listModels,
-  parseModelsTable,
-  resolveCoderHome,
+  parseModelsConfig,
   resolveModel,
 } from '../lib/engine/native/coder.mjs';
 
@@ -25,32 +23,36 @@ const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CODER_MODULE = path.join(ROOT, 'lib', 'engine', 'native', 'coder.mjs');
 const DYSTOPIA = path.join(ROOT, 'dystopia');
+const MODELS_FILE = path.join(ROOT, 'agent', 'models.json');
+const API_KEY_FIELD = 'api' + 'Key';
+const API_KEY_ENV = 'COMMANDCODE' + '_API_KEY';
 
-const TABLE = [
-  'provider     model                       context  max-out  thinking  images',
-  'commandcode  deepseek-v4.1-flash-fast    128k     8k       yes       no',
-  'commandcode  deepseek-v4.1-flash         128k     8k       yes       no',
-  'openrouter   Qwen/Qwen3.8-Omni-Flash     128k     8k       no        yes',
-  'vendor       other-model                 32k      4k       no        no',
-].join('\n');
-
-async function makeFakeCoder(t, table = TABLE) {
-  const home = await mkdtemp(path.join(tmpdir(), 'dystopia-coder-'));
+async function makeDystopiaHome(t) {
+  const home = await mkdtemp(path.join(tmpdir(), 'dystopia-home-'));
   t.after(() => rm(home, { recursive: true, force: true }));
-  const binary = path.join(home, 'coder');
-  await writeFile(binary, `#!/usr/bin/env bash\nset -euo pipefail\ncat <<'BANG'\n${table}\nBANG\n`);
-  await chmod(binary, 0o755);
+  const agent = path.join(home, 'agent');
+  await mkdir(agent, { recursive: true });
+  await cp(MODELS_FILE, path.join(agent, 'models.json'));
   const envFile = path.join(home, 'empty.env');
   await writeFile(envFile, '');
-  return { home, binary, envFile };
+  await chmod(envFile, 0o600);
+  return { home, agent, envFile };
 }
 
 function bareEnv(extra = {}) {
   const env = { ...process.env };
-  delete env.CODER_HOME;
-  delete env.CODER_DEFAULT_MODEL;
-  delete env.DYSTOPIA_MODEL;
-  delete env.DYSTOPIA_NATIVE_DRIVER;
+  for (const name of [
+    'CODER_HOME',
+    'CODER_DEFAULT_MODEL',
+    'DYSTOPIA_HOME',
+    'DYSTOPIA_AGENT_DIR',
+    'DYSTOPIA_ENV_FILE',
+    'DYSTOPIA_MODEL',
+    'DYSTOPIA_NATIVE_DRIVER',
+    'DYSTOPIA_PI_SDK',
+  ]) {
+    delete env[name];
+  }
   return { ...env, ...extra };
 }
 
@@ -83,141 +85,167 @@ async function runCli(args, env) {
   }
 }
 
-test('thiếu CODER_HOME → lỗi rõ, exit 64 (không có giá trị mặc định)', () => {
-  assert.throws(
-    () => resolveCoderHome({}),
-    (error) => error.exitCode === 64 && /CODER_HOME/.test(error.message) && /đặt CODER_HOME/.test(error.message),
-  );
-  assert.throws(
-    () => listModels({ env: {} }),
-    (error) => error.exitCode === 64 && /CODER_HOME/.test(error.message),
-  );
-  assert.throws(
-    () => coderBinary({ CODER_HOME: '/khong/co/that' }),
-    (error) => error.exitCode === 64 && /CODER_HOME/.test(error.message),
-  );
-});
-
-test('listModels/parseModelsTable đọc bảng coder models theo cột', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const models = listModels({ env: bareEnv({ CODER_HOME: coder.home }) });
-  assert.equal(models.length, 4);
+test('listModels đọc agent/models.json của Dystopia, không cần CODER_HOME', async (t) => {
+  const home = await makeDystopiaHome(t);
+  const models = listModels({ env: bareEnv({ DYSTOPIA_HOME: home.home }) });
+  assert.equal(models.length, 2);
   assert.deepEqual(models[0], {
     provider: 'commandcode',
-    model: 'deepseek-v4.1-flash-fast',
-    label: 'commandcode/deepseek-v4.1-flash-fast',
-    context: '128k',
-    'max-out': '8k',
-    thinking: 'yes',
-    images: 'no',
+    model: 'deepseek/deepseek-v4.1-flash-fast',
+    label: 'commandcode/deepseek/deepseek-v4.1-flash-fast',
+    name: 'DeepSeek V4.1 Flash Fast',
+    contextWindow: 1000000,
   });
-  assert.equal(models[2].model, 'Qwen/Qwen3.8-Omni-Flash');
-  assert.equal(models[2].label, 'openrouter/Qwen/Qwen3.8-Omni-Flash');
+  assert.equal(models[1].model, 'deepseek/deepseek-v4.1-flash');
 
-  const parsed = parseModelsTable(TABLE);
-  assert.equal(parsed[1].model, 'deepseek-v4.1-flash');
-  assert.throws(() => parseModelsTable('không có header'), /header/);
+  const viaAgentDir = listModels({
+    env: bareEnv({ DYSTOPIA_HOME: path.join(home.home, 'khong-co'), DYSTOPIA_AGENT_DIR: home.agent }),
+  });
+  assert.deepEqual(viaAgentDir, models);
+});
+
+test('agent/models.json of Dystopia: provider commandcode, apiKey chỉ là tên biến', async () => {
+  const document = JSON.parse(await readFile(MODELS_FILE, 'utf8'));
+  const provider = document.providers.commandcode;
+  assert.equal(provider.name, 'CommandCode');
+  assert.equal(provider.baseUrl, 'https://api.commandcode.ai/provider/v1');
+  assert.equal(provider.api, 'openai-completions');
+  assert.equal(provider[API_KEY_FIELD], `$${API_KEY_ENV}`);
+  assert.deepEqual(
+    provider.models.map((model) => model.id),
+    ['deepseek/deepseek-v4.1-flash-fast', 'deepseek/deepseek-v4.1-flash'],
+  );
+  assert.ok(provider.models.every((model) => model.contextWindow === 1000000));
+});
+
+test('agent/models.json: apiKey là env interpolation $NAME/${NAME}, không phải key literal', async () => {
+  const document = JSON.parse(await readFile(MODELS_FILE, 'utf8'));
+  const value = document.providers.commandcode[API_KEY_FIELD];
+  assert.equal(value, `$${API_KEY_ENV}`);
+  assert.match(value, /^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/);
+  assert.notEqual(value, API_KEY_ENV);
+});
+
+test('models.json thiếu/hỏng/không có model → exit 64, lỗi rõ', async (t) => {
+  const empty = await mkdtemp(path.join(tmpdir(), 'dystopia-no-models-'));
+  t.after(() => rm(empty, { recursive: true, force: true }));
+
+  assert.throws(
+    () => listModels({ env: bareEnv({ DYSTOPIA_HOME: empty }) }),
+    (error) => error.exitCode === 64 && /models\.json/.test(error.message) && /DYSTOPIA_HOME/.test(error.message),
+  );
+  assert.throws(
+    () => parseModelsConfig('{', { file: 'models.json' }),
+    (error) => error.exitCode === 64 && /JSON/.test(error.message),
+  );
+  assert.throws(
+    () => parseModelsConfig('{}'),
+    (error) => error.exitCode === 64 && /providers/.test(error.message),
+  );
+  assert.throws(
+    () => parseModelsConfig('{"providers":{"p":{"models":[]}}}'),
+    (error) => error.exitCode === 64 && /không liệt kê/.test(error.message),
+  );
 });
 
 test('model mặc định của Dystopia khác model viết code, theo thứ tự ưu tiên', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const models = listModels({ env: bareEnv({ CODER_HOME: coder.home }) });
+  const home = await makeDystopiaHome(t);
+  const models = listModels({ env: bareEnv({ DYSTOPIA_HOME: home.home }) });
   const chosen = resolveModel(models, { env: bareEnv() });
-  assert.equal(chosen.model, 'deepseek-v4.1-flash');
+  assert.equal(chosen.model, 'deepseek/deepseek-v4.1-flash');
 
-  // CODER_DEFAULT_MODEL đổi → vẫn không chọn model viết code.
   const otherCode = resolveModel(models, { env: bareEnv({ CODER_DEFAULT_MODEL: 'deepseek-v4.1-flash' }) });
-  assert.equal(otherCode.model, 'Qwen/Qwen3.8-Omni-Flash');
+  assert.equal(otherCode.model, 'deepseek/deepseek-v4.1-flash-fast');
 
-  // Không có model ưu tiên → model đầu tiên khác model viết code.
-  const table = [
-    'provider  model       context  max-out  thinking  images',
-    'p         code-model  8k       1k       no        no',
-    'p         z-model     8k       1k       no        no',
-  ].join('\n');
-  const fallback = await makeFakeCoder(t, table);
-  const fallbackModels = listModels({ env: bareEnv({ CODER_HOME: fallback.home }) });
+  const fallbackModels = parseModelsConfig(
+    JSON.stringify({
+      providers: {
+        p: { models: [{ id: 'code-model' }, { id: 'z-model' }] },
+      },
+    }),
+  );
   const picked = resolveModel(fallbackModels, { env: bareEnv({ CODER_DEFAULT_MODEL: 'code-model' }) });
   assert.equal(picked.model, 'z-model');
 
-  // Chỉ còn model viết code → exit 64.
-  const only = await makeFakeCoder(t, [
-    'provider  model       context  max-out  thinking  images',
-    'p         code-model  8k       1k       no        no',
-  ].join('\n'));
-  const onlyModels = listModels({ env: bareEnv({ CODER_HOME: only.home }) });
+  const only = parseModelsConfig(JSON.stringify({ providers: { p: { models: [{ id: 'code-model' }] } } }));
   assert.throws(
-    () => resolveModel(onlyModels, { env: bareEnv({ CODER_DEFAULT_MODEL: 'code-model' }) }),
+    () => resolveModel(only, { env: bareEnv({ CODER_DEFAULT_MODEL: 'code-model' }) }),
     (error) => error.exitCode === 64 && /khác model viết code/.test(error.message),
   );
 });
 
 test('DYSTOPIA_MODEL: khớp tên/provider, lạ → exit 64 kèm danh sách', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const models = listModels({ env: bareEnv({ CODER_HOME: coder.home }) });
+  const home = await makeDystopiaHome(t);
+  const models = listModels({ env: bareEnv({ DYSTOPIA_HOME: home.home }) });
 
-  assert.equal(resolveModel(models, { env: bareEnv({ DYSTOPIA_MODEL: 'other-model' }) }).model, 'other-model');
   assert.equal(
-    resolveModel(models, { env: bareEnv({ DYSTOPIA_MODEL: 'openrouter/Qwen/Qwen3.8-Omni-Flash' }) }).model,
-    'Qwen/Qwen3.8-Omni-Flash',
+    resolveModel(models, { env: bareEnv({ DYSTOPIA_MODEL: 'deepseek-v4.1-flash-fast' }) }).model,
+    'deepseek/deepseek-v4.1-flash-fast',
+  );
+  assert.equal(
+    resolveModel(models, { env: bareEnv({ DYSTOPIA_MODEL: 'commandcode/deepseek/deepseek-v4.1-flash' }) }).model,
+    'deepseek/deepseek-v4.1-flash',
   );
   assert.throws(
     () => resolveModel(models, { env: bareEnv({ DYSTOPIA_MODEL: 'khong-co-model' }) }),
     (error) =>
       error.exitCode === 64 &&
       /DYSTOPIA_MODEL="khong-co-model"/.test(error.message) &&
-      /other-model/.test(error.message),
+      /deepseek-v4\.1-flash-fast/.test(error.message),
   );
 });
 
 test('formatModels đánh dấu model Dystopia và model viết code', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const models = listModels({ env: bareEnv({ CODER_HOME: coder.home }) });
+  const home = await makeDystopiaHome(t);
+  const models = listModels({ env: bareEnv({ DYSTOPIA_HOME: home.home }) });
   const chosen = resolveModel(models, { env: bareEnv() });
   const text = formatModels(models, { chosen, codeModel: 'deepseek-v4.1-flash-fast' });
-  assert.match(text, /^\* commandcode\/deepseek-v4\.1-flash {2}\[dystopia\]$/m);
-  assert.match(text, /commandcode\/deepseek-v4\.1-flash-fast.*\[code\]/);
+  assert.match(text, /^\* commandcode\/deepseek\/deepseek-v4\.1-flash {2}\[dystopia\]$/m);
+  assert.match(text, /commandcode\/deepseek\/deepseek-v4\.1-flash-fast.*\[code\]/);
 });
 
-test('dystopia models in danh sách và đánh dấu (coder giả)', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const env = bareEnv({ CODER_HOME: coder.home, DYSTOPIA_ENV_FILE: coder.envFile });
+test('dystopia models in danh sách, không cần CODER_HOME', async (t) => {
+  const home = await makeDystopiaHome(t);
+  const env = bareEnv({ DYSTOPIA_HOME: home.home, DYSTOPIA_ENV_FILE: home.envFile });
   const { code, stdout } = await runCli(['models'], env);
   assert.equal(code, 0);
-  assert.match(stdout, /Dystopia: commandcode\/deepseek-v4\.1-flash/);
-  assert.match(stdout, /^\* commandcode\/deepseek-v4\.1-flash {2}\[dystopia\]$/m);
+  assert.match(stdout, /Dystopia: commandcode\/deepseek\/deepseek-v4\.1-flash/);
+  assert.match(stdout, /^\* commandcode\/deepseek\/deepseek-v4\.1-flash {2}\[dystopia\]$/m);
   assert.match(stdout, /Model viết code: deepseek-v4\.1-flash-fast/);
   assert.match(stdout, /\[code\]/);
 });
 
-test('dystopia models thiếu CODER_HOME → exit 64, lỗi rõ', async (t) => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'dystopia-empty-env-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const envFile = path.join(dir, 'empty.env');
+test('dystopia models thiếu models.json → exit 64, lỗi rõ', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'dystopia-no-agent-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const envFile = path.join(home, 'empty.env');
   await writeFile(envFile, '');
-  const env = bareEnv({ DYSTOPIA_ENV_FILE: envFile });
+  await chmod(envFile, 0o600);
+  const env = bareEnv({ DYSTOPIA_HOME: home, DYSTOPIA_ENV_FILE: envFile });
   const { code, stderr } = await runCli(['models'], env);
   assert.equal(code, 64);
-  assert.match(stderr, /CODER_HOME/);
+  assert.match(stderr, /models\.json/);
+  assert.match(stderr, /DYSTOPIA_HOME/);
 });
 
-test('review --engine native thiếu CODER_HOME → exit 64', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const env = bareEnv({ DYSTOPIA_ENV_FILE: coder.envFile });
+test('review --engine native thiếu CODER_HOME → exit 64 (chỉ cần cho sandbox-exec)', async (t) => {
+  const home = await makeDystopiaHome(t);
+  const env = bareEnv({ DYSTOPIA_HOME: home.home, DYSTOPIA_ENV_FILE: home.envFile });
   const { code, stderr } = await runCli(
     ['review', '--engine', 'native', '--from', 'base0001', '--to', 'head0002'],
     env,
   );
   assert.equal(code, 64);
   assert.match(stderr, /CODER_HOME/);
+  assert.match(stderr, /sandbox-exec\.sh/);
 });
 
 test('review --engine native với DYSTOPIA_MODEL lạ → exit 64 kèm danh sách', async (t) => {
-  const coder = await makeFakeCoder(t);
+  const home = await makeDystopiaHome(t);
   const env = bareEnv({
-    CODER_HOME: coder.home,
+    DYSTOPIA_HOME: home.home,
     DYSTOPIA_MODEL: 'khong-co-model',
-    DYSTOPIA_ENV_FILE: coder.envFile,
+    DYSTOPIA_ENV_FILE: home.envFile,
   });
   const { code, stderr } = await runCli(
     ['review', '--engine', 'native', '--from', 'base0001', '--to', 'head0002'],
@@ -225,12 +253,12 @@ test('review --engine native với DYSTOPIA_MODEL lạ → exit 64 kèm danh sá
   );
   assert.equal(code, 64);
   assert.match(stderr, /DYSTOPIA_MODEL/);
-  assert.match(stderr, /other-model/);
+  assert.match(stderr, /deepseek-v4\.1-flash/);
 });
 
 test('coder main: models không tham số, tham số lạ → 64', async (t) => {
-  const coder = await makeFakeCoder(t);
-  const env = bareEnv({ CODER_HOME: coder.home });
+  const home = await makeDystopiaHome(t);
+  const env = bareEnv({ DYSTOPIA_HOME: home.home });
   const ok = await runNode(CODER_MODULE, ['models'], env);
   assert.equal(ok.code, 0);
   assert.match(ok.stdout, /dystopia/);

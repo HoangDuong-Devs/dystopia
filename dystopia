@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Dystopia (công cụ review của Kosma): review code cho FireMoth, xây trên OpenCodeReview (alibaba). Nạp key, map sang OCR_LLM_*, mặc định JSON.
+# Dystopia (công cụ review của Kosma): review code cho FireMoth, xây trên OpenCodeReview (alibaba). Nạp key của chính Dystopia, map sang OCR_LLM_*, mặc định JSON.
 set -euo pipefail
-DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+INSTALL_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# DYSTOPIA_HOME là thư mục dữ liệu/cấu hình; mặc định chính thư mục cài.
+DYSTOPIA_HOME="${DYSTOPIA_HOME:-$INSTALL_DIR}"
+export DYSTOPIA_HOME
 if [ "${1:-}" = --version ] || [ "${1:-}" = -V ]; then
   # --version không cần .env, không cần binary OCR.
-  version="$(cat "$DYSTOPIA_HOME/VERSION" 2>/dev/null || true)"
+  version="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || true)"
   [ -n "$version" ] || version="unknown"
-  if git -C "$DYSTOPIA_HOME" rev-parse --short HEAD >/dev/null 2>&1; then
-    revision="$(git -C "$DYSTOPIA_HOME" rev-parse --short HEAD)"
+  if git -C "$INSTALL_DIR" rev-parse --short HEAD >/dev/null 2>&1; then
+    revision="$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
   else
     revision="nogit"
   fi
@@ -15,31 +18,46 @@ if [ "${1:-}" = --version ] || [ "${1:-}" = -V ]; then
   exit 0
 fi
 ENV_FILE="${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}"
-if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-# bench không cần binary OCR: chạy thẳng module Node.
-if [ "${1:-}" = bench ]; then
-  shift
-  exec node "$DYSTOPIA_HOME/lib/bench.mjs" "$@"
+if [ -f "$ENV_FILE" ]; then
+  # Chỉ đọc .env khi quyền không rộng hơn 600; không bao giờ in nội dung file.
+  perms="$(stat -c %a "$ENV_FILE" 2>/dev/null || true)"
+  if [ -n "$perms" ]; then
+    last3="${perms: -3}"
+    if [ "${#last3}" -ge 3 ]; then
+      group="${last3: -2:1}"
+      other="${last3: -1:1}"
+      if [ "$group" != "0" ] || [ "$other" != "0" ]; then
+        echo "dystopia: $ENV_FILE có quyền $perms, rộng hơn 600; chạy chmod 600 \"$ENV_FILE\"" >&2
+        exit 64
+      fi
+    fi
+  fi
+  set -a; . "$ENV_FILE"; set +a
 fi
-# models chỉ cần cấu hình MTH (CODER_HOME), không cần binary OCR.
-if [ "${1:-}" = models ]; then
-  exec node "$DYSTOPIA_HOME/lib/engine/native/coder.mjs" models
-fi
-BIN="${DYSTOPIA_OCR_BIN:-$DYSTOPIA_HOME/bin/opencodereview}"
+# OCR cần OCR_LLM_*; native đọc thẳng COMMANDCODE_API_KEY nên KHÔNG unset biến này.
 if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
   export OCR_LLM_TOKEN="$COMMANDCODE_API_KEY"
 fi
 export OCR_LLM_URL="${OCR_LLM_URL:-https://api.commandcode.ai/provider/v1}"
 export OCR_LLM_PROTOCOL="${OCR_LLM_PROTOCOL:-openai}"
 export OCR_LLM_MODEL="${OCR_LLM_MODEL:-deepseek/deepseek-v4.1-flash-fast}"
-unset COMMANDCODE_API_KEY
+# bench không cần binary OCR: chạy thẳng module Node.
+if [ "${1:-}" = bench ]; then
+  shift
+  exec node "$INSTALL_DIR/lib/bench.mjs" "$@"
+fi
+# models chỉ cần agent/models.json của Dystopia, không cần binary OCR.
+if [ "${1:-}" = models ]; then
+  exec node "$INSTALL_DIR/lib/engine/native/coder.mjs" models
+fi
+BIN="${DYSTOPIA_OCR_BIN:-$INSTALL_DIR/bin/opencodereview}"
 # review (trừ --raw và --format tự chọn) đi qua hợp đồng engine trong node.
 # Kiểm tra binary nằm trong adapter OCR nên vẫn giữ nguyên thông điệp/exit 127.
 case "${1:-}" in
   review|r)
     shift
-    exec node "$DYSTOPIA_HOME/lib/review.mjs" "$@";;
-  *) [ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $DYSTOPIA_HOME/install.sh" >&2; exit 127; };;
+    exec node "$INSTALL_DIR/lib/review.mjs" "$@";;
+  *) [ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $INSTALL_DIR/install.sh" >&2; exit 127; };;
 esac
 OVERLAY="$DYSTOPIA_HOME/rules-overlay/rule.json"
 add_rule=()

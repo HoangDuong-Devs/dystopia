@@ -1,10 +1,10 @@
 # Dystopia – công cụ review code của FireMoth (xây trên OpenCodeReview)
 
-Công cụ review code bằng LLM (alibaba/open-code-review), đóng gói kiểu MTH: một lệnh `dystopia`, `install.sh` tự kiểm, key trong `.env`.
+Công cụ review code bằng LLM (alibaba/open-code-review), đóng gói kiểu MTH: một lệnh `dystopia`, `install.sh` tự kiểm, key trong `.env` riêng của Dystopia (quyền 600).
 
 - **Ref ghim:** `9867a3d` (alibaba/open-code-review). Clone upstream ở `~/firemoth/tools/opencodereview`, coi là **chỉ đọc**. `install.sh` báo FAIL nếu clone lệch ref (đổi bằng `OCR_REF=...`).
 - **Cài / kiểm:** `~/firemoth/tools/dystopia/install.sh` → in dòng OK/WARN/FAIL, cuối cùng `Kết quả: sẵn sàng.`
-- **Model mặc định:** `deepseek/deepseek-v4.1-flash-fast` qua CommandCode (OpenAI-compatible).
+- **Model mặc định của OCR:** `deepseek/deepseek-v4.1-flash-fast` qua CommandCode (OpenAI-compatible); engine native dùng `agent/models.json` riêng.
 
 ## Gọi
 ```
@@ -22,7 +22,7 @@ $DYSTOPIA review --format text                   # tự chọn format thì wrapp
 $DYSTOPIA bench                                   # chạy mọi case bench một lần
 $DYSTOPIA bench --runs 3 --case aeb2fc6           # lặp 3 lần, chỉ chọn case aeb2fc6
 $DYSTOPIA bench --engine ocr                      # engine dùng cho bench (mặc định ocr)
-$DYSTOPIA models                                  # model native dùng được (từ cấu hình MTH)
+$DYSTOPIA models                                  # model native dùng được (từ agent/models.json của Dystopia)
 $DYSTOPIA --version                               # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 `review` mặc định chạy engine `ocr`: OCR với `--format json` vào file tạm, chuẩn hóa thành
@@ -35,10 +35,15 @@ của OCR giữ nguyên. Chạy trong thư mục repo cần review (hoặc dùng
 
 Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho binary OCR:
 - Bắt buộc `--from <base> --to <head>`; thiếu hoặc dùng `-c` → exit 64 với gợi ý `--from/--to`.
-- Tìm MTH qua `CODER_HOME` (bắt buộc, không có mặc định); thiếu `$CODER_HOME/coder` → exit 64.
-- Model lấy từ `$CODER_HOME/coder models`; `DYSTOPIA_MODEL` chọn theo tên, mặc định là model
-  khác model viết code (`CODER_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`).
-  `dystopia models` in danh sách, đánh dấu `*` model Dystopia đang chọn và `[code]` model viết code.
+- Key và model là của riêng Dystopia: launcher đọc `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}`
+  (từ chối exit 64 nếu quyền rộng hơn 600), agent dir là
+  `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`. Không dùng `$CODER_HOME/agent` hay `.env` của MTH.
+- Model đọc từ `agent/models.json` (provider `commandcode`; `apiKey` chỉ là tên biến
+  `COMMANDCODE_API_KEY`). `DYSTOPIA_MODEL` chọn theo tên, mặc định là model khác model viết code
+  (`CODER_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`). `dystopia models` in danh sách,
+  đánh dấu `*` model Dystopia đang chọn và `[code]` model viết code.
+- `CODER_HOME` vẫn bắt buộc nhưng **chỉ** để tìm `$CODER_HOME/lib/sandbox-exec.sh`; thiếu biến
+  hoặc thiếu file → exit 64.
 - Mỗi file thay đổi một lượt agent; tool chỉ đọc `read_file` (tối đa 400 dòng/lần),
   `list_changed_files`, `grep` (tối đa 200 dòng khớp), `git_show` (chỉ base/head), và
   `report_finding` kiểm schema ngay (severity, dòng phía head, evidence...).
@@ -76,16 +81,24 @@ engine lạ). `--engine native` dùng được và nhận các cờ giới hạn
 ## Biến môi trường (`.env`, hoặc file khác qua `DYSTOPIA_ENV_FILE`)
 | Biến | Ý nghĩa |
 |---|---|
-| `COMMANDCODE_API_KEY` | key, được map sang `OCR_LLM_TOKEN` |
+| `DYSTOPIA_HOME` | thư mục dữ liệu/cấu hình; mặc định thư mục cài (launcher export cho node con) |
+| `DYSTOPIA_ENV_FILE` | env file; mặc định `$DYSTOPIA_HOME/.env` (quyền không rộng hơn 600) |
+| `DYSTOPIA_AGENT_DIR` | agent dir riêng; mặc định `$DYSTOPIA_HOME/agent` |
+| `COMMANDCODE_API_KEY` | key thật; native đọc trực tiếp, OCR được map sang `OCR_LLM_TOKEN` |
 | `OCR_LLM_MODEL` | đổi model (mặc định trên) |
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | ghi đè provider |
 | `DYSTOPIA_BENCH_DIR` | thư mục dữ liệu bench (mặc định `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | lệnh reviewer thay cho `dystopia review` (dùng khi test) |
-| `CODER_HOME` | thư mục cài MTH (bắt buộc với engine native: `coder models`, `agent`, `lib/sandbox-exec.sh`) |
-| `DYSTOPIA_MODEL` | model native dùng; phải có trong danh sách của MTH |
+| `CODER_HOME` | thư mục cài MTH, chỉ để tìm `$CODER_HOME/lib/sandbox-exec.sh` (bắt buộc với engine native) |
+| `DYSTOPIA_MODEL` | model native dùng; phải có trong `agent/models.json` của Dystopia |
 | `DYSTOPIA_PI_SDK` | ghi đè đường dẫn `dist/index.js` của Pi SDK |
 | `DYSTOPIA_NATIVE_DRIVER` | file `.mjs` driver giả, chỉ dùng khi test |
-Không in key ra log/chat.
+
+Không in key ra log/chat, không đưa key vào meta/output JSON.
+
+**Xoay key:** trên fc1 phải cập nhật **cả hai** bản `.env` — `.env` của MTH và
+`$DYSTOPIA_HOME/.env` của Dystopia. Tên biến: `COMMANDCODE_API_KEY`, `OCR_LLM_TOKEN`,
+`OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`, `CODER_HOME`.
 
 ## Đầu ra JSON
 Mặc định `review` in schema chuẩn hóa `{ meta, findings }`:

@@ -556,6 +556,7 @@ test('wrapper `dystopia bench` gọi module bench mà không cần binary OCR', 
   const bench = await makeBench(t, { c: caseFor(repo) }, [reviewResult([finding()])]);
   const envFile = path.join(bench.dir, 'empty.env');
   await writeFile(envFile, '');
+  await chmod(envFile, 0o600);
 
   const { stdout } = await execFileAsync(path.join(ROOT, 'dystopia'), ['bench'], {
     env: benchEnv(bench, { DYSTOPIA_ENV_FILE: envFile }),

@@ -236,6 +236,7 @@ cp "\$FAKE_OCR_FIXTURE" "\$out"
   await chmod(bin, 0o755);
   const envFile = path.join(dir, 'empty.env');
   await writeFile(envFile, '');
+  await chmod(envFile, 0o600);
   return { dir, bin, envFile };
 }
 

@@ -122,7 +122,7 @@ dystopia review --engine native --from <base> --to <head>
                 [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
 dystopia bench [--case <id>] [--runs N] [--engine ocr|native]
                 [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
-dystopia models          # model native dùng được, lấy từ cấu hình MTH
+dystopia models          # model native dùng được, lấy từ agent/models.json của Dystopia
 dystopia --version       # dystopia <VERSION> (<git short HEAD|nogit>)
 ```
 
@@ -137,9 +137,10 @@ hợp đồng (không qua wrapper bash) và chuyển tiếp các cờ giới h�
 
 Commit B đã có:
 
-- adapter native chạy lõi Pi qua thư viện, tìm MTH qua `CODER_HOME` (thiếu → exit 64),
-  `DYSTOPIA_MODEL` chọn từ danh sách MTH, model mặc định khác `CODER_DEFAULT_MODEL`, ghi
-  model thật vào `meta.model`;
+- adapter native chạy lõi Pi qua thư viện, đọc key/model từ cấu hình riêng của Dystopia
+  (`$DYSTOPIA_HOME`, `agent/models.json`), `DYSTOPIA_MODEL` chọn theo tên, model mặc định khác
+  `CODER_DEFAULT_MODEL`, ghi model thật vào `meta.model`; `CODER_HOME` chỉ còn để tìm
+  `$CODER_HOME/lib/sandbox-exec.sh` (thiếu → exit 64);
 - pha file: mỗi file thay đổi một lượt agent, chạy song song có giới hạn;
 - tool chỉ đọc `read_file`, `list_changed_files`, `grep`, `git_show`; `report_finding` kiểm
   schema ngay; lệnh git chạy qua `sandbox-exec` của MTH;
