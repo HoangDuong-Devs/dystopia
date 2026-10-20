@@ -24,7 +24,8 @@ dystopia models
 | `lib/engine/native/loop.mjs` | pha file, pool song song có giới hạn, ngân sách token/tool call, meta |
 | `lib/engine/native/driver-pi.mjs` | driver Pi SDK (`createAgentSession`, `noTools` + `customTools`) |
 | `lib/engine/native/limits.mjs` | chuẩn hóa `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency` |
-| `lib/engine/native/prompts/placeholder.md` | prompt tạm, chờ Kosma viết prompt thật ở commit C |
+| `lib/engine/native/prompts/file-review.md` | prompt hệ thống pha file (Kosma, pass 1 theo từng file) |
+| `lib/engine/native/prompts/cross-file.md` | prompt pass 2 cross-file của Kosma; **chưa dùng**, để dành cho pha cross-file sau này |
 | `agent/models.json` | provider `commandcode` của Dystopia; `apiKey` chỉ ghi **tên biến** `COMMANDCODE_API_KEY` |
 
 `normalize`, `--text`, `bench` và CLI không biết engine nào bên dưới: tất cả đi qua hợp đồng
@@ -137,9 +138,15 @@ sau cùng), và cả kết quả đi qua `validateResult` của commit A.
    giữa chừng vẫn giữ được các file đã xong.
 7. Không có tool ghi file/chạy lệnh cho agent.
 
-`meta.per_file` là mảng `{file, tokens_in, tokens_out, tool_calls, truncated}` cho từng file
-(cùng dữ liệu với `meta.phases.file.files`); `meta.errors` liệt kê file lỗi và `meta.partial`
-cho biết lần ghi hiện tại là tạm hay cuối.
+`meta.per_file` là mảng `{file, tokens_in, tokens_out, tool_calls, truncated, rejected_reports,
+final_text}` cho từng file (cùng dữ liệu với `meta.phases.file.files`); `meta.errors` liệt kê
+file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cuối.
+
+- `rejected_reports: {count, reasons}` đếm **mọi** lần gọi `report_finding` bị validation từ
+  chối trong file đó; `reasons` là lý do từ chối (đã scrub `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN`),
+  tối đã 20 phần tử trong khi `count` vẫn đếm đủ.
+- `final_text` là 500 ký tự đầu của text assistant **cuối cùng** trong lượt chạy của file (đã
+  scrub key), `null` nếu không có text nào.
 
 `meta` của engine native:
 
@@ -159,7 +166,9 @@ cho biết lần ghi hiện tại là tạm hay cuối.
   "concurrency": 2,
   "limits": { "max_tool_calls": 40, "max_tokens": 400000, "phase_split": 0.7 },
   "per_file": [
-    { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true }
+    { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true,
+      "rejected_reports": { "count": 1, "reasons": ["line 999 vượt quá 3 dòng của \"src/file1.ts\" ở head"] },
+      "final_text": "Đã báo 2 finding cho file này." }
   ],
   "errors": [{ "file": "src/file2.ts", "error": "Pi báo lỗi provider: Stream ended without finish_reason" }],
   "partial": false,
@@ -170,8 +179,9 @@ cho biết lần ghi hiện tại là tạm hay cuối.
       "tool_calls": 4,
       "duration_ms": 1200,
       "files": [
-        { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300,
-          "tool_calls": 4, "truncated": true }
+        { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true,
+          "rejected_reports": { "count": 1, "reasons": ["line 999 vượt quá 3 dòng của \"src/file1.ts\" ở head"] },
+          "final_text": "Đã báo 2 finding cho file này." }
       ]
     }
   }
@@ -189,7 +199,7 @@ cho biết lần ghi hiện tại là tạm hay cuối.
   `COMMANDCODE_API_KEY` mà `models.json` trỏ tới;
 - `SessionManager.inMemory()`, settings trong bộ nhớ (tắt compaction/retry);
 - `noTools: true` + `customTools` đúng 5 tool ở trên;
-- model lấy từ `coder.mjs`, thinking `off`, system prompt là `prompts/placeholder.md`.
+- model lấy từ `coder.mjs`, thinking `off`, system prompt mặc định là `prompts/file-review.md`.
 
 Sau `session.prompt`, driver kiểm assistant message cuối. Nếu `stopReason` là `error` (hoặc
 `prompt` ném lỗi), driver ném `EngineError` kèm thông điệp lỗi provider, đã thay mọi giá trị
@@ -233,8 +243,11 @@ launcher map `OCR_LLM_TOKEN` từ `COMMANDCODE_API_KEY` khi biến này chưa đ
 
 ## 8. Prompt, pha tổng, khử trùng lặp (commit C)
 
-- Prompt hệ thống hiện là **bản tạm** `prompts/placeholder.md`, dòng đầu ghi rõ
-  "TẠM — chờ Kosma viết prompt thật (commit C)". Không chép prompt của OCR.
+- Prompt hệ thống pha file là `prompts/file-review.md` (Kosma viết, pass 1 theo từng file);
+  `loadSystemPrompt()` nạp file này khi không truyền `systemPrompt`/`promptPath`.
+  Không chép prompt của OCR.
+- `prompts/cross-file.md` (Kosma, pass 2 cross-file) đã có trong repo nhưng **chưa dùng**;
+  nó để dành cho pha cross-file sau này.
 - Chưa nạp `rules-overlay/` dạng file rule và chưa có pha tổng.
 - Chưa khử trùng lặp finding.
 
@@ -252,7 +265,9 @@ dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `
   evidence rỗng; agent sửa lại trong cùng lượt.
 - `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, ngân sách dự phòng
   report (ngừng đọc, lượt cuối vẫn giữ finding), `maxToolCalls-2`, token/phase-split,
-  concurrency, `meta.model`, giới hạn mặc định.
+  concurrency, `meta.model`, giới hạn mặc định; `rejected_reports` (count/reasons, cap 20) và
+  `final_text` (500 ký tự, scrub key) trong `meta.per_file`; prompt `file-review.md` được
+  truyền cho driver.
 - `test/native-isolation.test.mjs`: một file lỗi stream hai lần → file khác vẫn có finding,
   `meta.errors` đúng file, output `partial: true` ghi sau file đầu, exit 0; lỗi một lần rồi
   thành công → không có `meta.errors`; mọi file lỗi → exit 20.

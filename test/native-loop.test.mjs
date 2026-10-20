@@ -54,7 +54,7 @@ function fakeDriverFactory(script, stats = {}) {
         state.active += 1;
         state.maxActive = Math.max(state.maxActive, state.active);
         try {
-          await script(options, { aborted: () => aborted, text });
+          return await script(options, { aborted: () => aborted, text });
         } finally {
           state.active -= 1;
         }
@@ -232,6 +232,41 @@ test('meta.model = model driver báo, meta.engine native, tokens/tool_calls theo
   assert.equal(typeof result.meta.duration_ms, 'number');
   assert.equal(result.meta.version, '0.3.0-dev');
   assert.deepEqual(result.meta.truncated, []);
+});
+
+test('meta.per_file: rejected_reports (count/reasons, cap 20) + final_text (cắt 500, scrub key); prompt file-review', async (t) => {
+  const repo = await makeNativeRepo(t, { files: 1 });
+  const key = 'fake-key-PERFILE-c4d5';
+  const seen = { systemPrompt: null };
+  const longText = `xong ${key} ` + 'y'.repeat(600);
+  const { factory } = fakeDriverFactory(async (options) => {
+    seen.systemPrompt = options.systemPrompt;
+    await options.tools.report_finding(validFinding({ severity: 'sai' }));
+    await options.tools.report_finding(validFinding({ line: 99, end_line: 99 }));
+    for (let index = 0; index < 20; index += 1) {
+      await options.tools.report_finding(validFinding({ severity: 'sai' }));
+    }
+    await options.tools.report_finding(validFinding());
+    return longText;
+  });
+
+  const result = await review({
+    ...optionsFor(repo, factory, { maxTokens: 10_000 }),
+    env: { ...process.env, COMMANDCODE_API_KEY: key },
+  });
+
+  const row = result.meta.per_file[0];
+  assert.equal(row.rejected_reports.count, 22);
+  assert.equal(row.rejected_reports.reasons.length, 20);
+  assert.match(row.rejected_reports.reasons[0], /severity/);
+  assert.match(row.rejected_reports.reasons[1], /vượt quá/);
+  assert.ok(row.rejected_reports.reasons.every((reason) => !reason.includes(key)));
+  assert.equal(row.final_text.length, 500);
+  assert.match(row.final_text, /\[REDACTED\]/);
+  assert.ok(!row.final_text.includes(key));
+  assert.match(seen.systemPrompt, /You review ONE changed file/);
+  assert.deepEqual(result.meta.phases.file.files[0], row);
+  assert.equal(result.findings.length, 1);
 });
 
 test('native cần cả base và head → EngineError exit 64', async () => {

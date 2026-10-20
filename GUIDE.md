@@ -55,8 +55,9 @@ Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho
   retry một lần; lỗi còn lại vào `meta.errors` và output được ghi tăng dần (`meta.partial`).
 - Lệnh git chạy qua `$CODER_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH, env allowlist
   không chứa key/token), không tự viết sandbox.
-- Prompt hiện là bản tạm `lib/engine/native/prompts/placeholder.md`; pha tổng, khử trùng lặp
-  và prompt/rules thật của Kosma là commit C. Chi tiết ở `docs/native.md`.
+- Prompt pha file là `lib/engine/native/prompts/file-review.md` của Kosma;
+  `prompts/cross-file.md` để dành cho pha cross-file sau này. Pha tổng và khử trùng lặp vẫn là
+  commit C. Chi tiết ở `docs/native.md`.
 
 Tên engine lạ vẫn exit 64. `--engine ocr` giữ nguyên hành vi cũ.
 

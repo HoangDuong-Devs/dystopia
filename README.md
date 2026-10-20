@@ -48,9 +48,10 @@ own: the launcher reads `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}` (mode broade
 selects one by name and the default is a model different from the coding model
 (`CODER_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
 models. `CODER_HOME` is still required but only to locate
-`$CODER_HOME/lib/sandbox-exec.sh`; git reads run through it. The system prompt is a
-temporary placeholder (`lib/engine/native/prompts/placeholder.md`): the summary phase,
-deduplication and Kosma's real prompt/rules are commit C. See `docs/native.md`.
+`$CODER_HOME/lib/sandbox-exec.sh`; git reads run through it. The per-file system prompt is
+`lib/engine/native/prompts/file-review.md` (Kosma's pass 1); `prompts/cross-file.md` is kept for
+a later cross-file pass. The summary phase and deduplication are still commit C. See
+`docs/native.md`.
 
 `meta` carries `tool`, `version`, `engine`, `base`, `head`, `model`, `tokens_in`, `tokens_out`
 and `duration_ms`; each finding has `severity` (`chặn`/`nên sửa`/`gợi ý`), `file`, `line`,

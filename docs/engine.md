@@ -147,6 +147,6 @@ Commit B đã có:
 - `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency`, `meta.truncated`;
 - `dystopia models`.
 
-Commit C còn lại: pha tổng, khử trùng lặp, nạp prompt/rules thật của Kosma. Prompt hiện là
-bản tạm `lib/engine/native/prompts/placeholder.md`. Chi tiết kiến trúc, tool và biến môi
-trường ở `docs/native.md`.
+Commit C còn lại: pha tổng, khử trùng lặp. Prompt pha file là
+`lib/engine/native/prompts/file-review.md` của Kosma; `prompts/cross-file.md` để dành cho pha
+cross-file sau này. Chi tiết kiến trúc, tool và biến môi trường ở `docs/native.md`.
