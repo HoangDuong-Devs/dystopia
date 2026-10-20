@@ -144,7 +144,8 @@ Commit B đã có:
 - pha file: mỗi file thay đổi một lượt agent, chạy song song có giới hạn;
 - tool chỉ đọc `read_file`, `list_changed_files`, `grep`, `git_show`; `report_finding` kiểm
   schema ngay; lệnh git chạy qua `sandbox-exec` của MTH;
-- `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency`, `meta.truncated`;
+- `--max-tool-calls`, `--max-tokens`, `--concurrency`, `meta.truncated`;
+  `--phase-split` vẫn được nhận nhưng deprecated và bị engine native bỏ qua;
 - `dystopia models`.
 
 Commit C còn lại: pha tổng, khử trùng lặp. Prompt pha file là

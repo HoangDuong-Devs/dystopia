@@ -1,5 +1,5 @@
 // Test tool chỉ đọc của engine native: chặn path traversal/tuyệt đối/symlink/.git,
-// cắt read_file 400 dòng, git_show chỉ base/head, lọc file lock/sinh tự
+// cắt read_file 500 dòng, git_show chỉ base/head, lọc file lock/sinh tự
 // động/binary. Không gọi LLM, không gọi OCR thật.
 
 import assert from 'node:assert/strict';
@@ -59,40 +59,39 @@ test('list_changed_files: có file thay đổi, bỏ lock/dist/binary, kèm +/-'
   assert.deepEqual(files.map((entry) => entry.file).sort(), ['src/file1.ts', 'src/file2.ts']);
 });
 
-test('read_file: đọc file ở head, cắt tối đa 150 dòng/12000 ký tự và báo', async (t) => {
-  const { tools } = await setup(t, { files: 1 });
+test('read_file: đọc file ở head, cắt tối đa 500 dòng (OCR file_read.go:12) và báo', async (t) => {
+  const { tools } = await setup(t, { files: 1, bigLines: 650 });
   const head = await tools.read_file({ path: 'src/file1.ts', from: 1, to: 100 });
   assert.match(head, /src\/file1\.ts \(dòng 1-3\/3\)/);
   assert.match(head, /2: export const value1b = 2;/);
   assert.doesNotMatch(head, /\[đã cắt/);
 
   const capped = await tools.read_file({ path: 'src/big.ts', from: 1, to: 999 });
-  assert.match(capped, /^.*\(dòng 1-150\/450\)/);
-  assert.match(capped, /150: line 150/);
-  assert.doesNotMatch(capped, /151: line 151/);
-  assert.match(capped, /\[đã cắt: dòng 1-150; gọi lại với from\/to\] \(tổng 450 dòng\)/);
+  assert.match(capped, /^.*\(dòng 1-500\/650\)/);
+  assert.match(capped, /500: line 500/);
+  assert.doesNotMatch(capped, /501: line 501/);
+  assert.match(capped, /\[đã cắt: dòng 1-500; gọi lại với from\/to\] \(tổng 650 dòng\)/);
 
-  const tail = await tools.read_file('src/big.ts', 401, 500);
-  assert.match(tail, /\(dòng 401-450\/450\)/);
-  assert.match(tail, /450: line 450/);
+  const tail = await tools.read_file('src/big.ts', 601, 700);
+  assert.match(tail, /\(dòng 601-650\/650\)/);
+  assert.match(tail, /650: line 650/);
   assert.doesNotMatch(tail, /\[đã cắt/);
 });
 
-test('read_file mặc định: quanh hunk file thay đổi, 150 dòng đầu file không đổi', async (t) => {
-  const { tools } = await setup(t, { files: 1, changeBig: true });
+test('read_file mặc định: từ dòng 1, không còn cửa sổ ±40 quanh hunk', async (t) => {
+  const { tools } = await setup(t, { files: 1, changeBig: true, bigLines: 650 });
   const changedDefault = await tools.read_file({ path: 'src/file1.ts' });
   assert.match(changedDefault, /\(dòng 1-3\/3\)/);
 
   const bigDefault = await tools.read_file({ path: 'src/big.ts' });
-  const window = /\(dòng (\d+)-(\d+)\/453\)/.exec(bigDefault);
-  assert.ok(window, `thiếu cửa sổ dòng trong: ${bigDefault.slice(0, 80)}`);
-  assert.ok(Number(window[1]) > 300, `cửa sổ phải quanh hunk cuối, nhận ${window[1]}`);
-  assert.match(bigDefault, /appended 453/);
+  assert.match(bigDefault, /\(dòng 1-500\/653\)/);
+  assert.match(bigDefault, /1: line 1/);
+  assert.doesNotMatch(bigDefault, /appended 453/);
 
   const { tools: unchanged } = await setup(t, { files: 1 });
   const unchangedDefault = await unchanged.read_file({ path: 'src/big.ts' });
-  assert.match(unchangedDefault, /\(dòng 1-150\/450\)/);
-  assert.match(unchangedDefault, /\[đã cắt: dòng 1-150; gọi lại với from\/to\] \(tổng 450 dòng\)/);
+  assert.match(unchangedDefault, /\(dòng 1-450\/450\)/);
+  assert.doesNotMatch(unchangedDefault, /\[đã cắt/);
 });
 
 test('read_file: trần ký tự mỗi lần gọi cũng cắt kèm ghi chú', async (t) => {
@@ -125,15 +124,15 @@ test('không đọc được nội dung ngoài repo qua ../ (không chỉ dựa 
   await assert.rejects(() => tools.read_file({ path: 'src/link-out' }), 'đọc được symlink ra ngoài');
 });
 
-test('grep giới hạn 60 dòng khớp và lọc theo path_glob', async (t) => {
+test('grep giới hạn 100 dòng khớp (OCR code_search.go:18) và lọc theo path_glob', async (t) => {
   const { tools } = await setup(t, { files: 2 });
   const result = await tools.grep({ pattern: 'value', path_glob: 'src/file2.ts' });
   assert.match(result, /src\/file2\.ts:2:/);
   assert.doesNotMatch(result, /src\/file1\.ts/);
 
   const many = await tools.grep({ pattern: 'line', path_glob: 'src/big.ts' });
-  assert.equal(many.split('\n').filter((line) => /^src\/big\.ts:\d+:/.test(line)).length, 60);
-  assert.match(many, /\[đã cắt: hiển thị 60\/450 dòng khớp/);
+  assert.equal(many.split('\n').filter((line) => /^src\/big\.ts:\d+:/.test(line)).length, 100);
+  assert.match(many, /\[đã cắt: hiển thị 100\/450 dòng khớp/);
 });
 
 test('git_show: chỉ nhận base/head, rev lạ bị từ chối, cắt 200 dòng kèm ghi chú', async (t) => {

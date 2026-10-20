@@ -9,12 +9,14 @@
         {
           "id": "deepseek/deepseek-v4.1-flash-fast",
           "name": "DeepSeek V4.1 Flash Fast",
-          "contextWindow": 1000000
+          "contextWindow": 1000000,
+          "maxTokens": 16384
         },
         {
           "id": "deepseek/deepseek-v4.1-flash",
           "name": "DeepSeek V4.1 Flash",
-          "contextWindow": 1000000
+          "contextWindow": 1000000,
+          "maxTokens": 16384
         }
       ]
     }

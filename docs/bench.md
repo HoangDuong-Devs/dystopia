@@ -129,7 +129,8 @@ dystopia bench [--runs N] [--case <id>]... [--engine <tên>]
 | `--runs N` | số lần chạy mỗi case, số nguyên ≥ 1 (mặc định 1) |
 | `--case <id>` | chỉ chạy case có id này; lặp lại được nhiều lần |
 | `--engine <tên>` | engine review, mặc định `ocr`; engine `native` chạy pha file (commit B); tên lạ → exit 64 |
-| `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency` | giới hạn chuyển cho engine native; engine khác bỏ qua |
+| `--max-tool-calls`, `--max-tokens`, `--concurrency` | giới hạn chuyển cho engine native; engine khác bỏ qua |
+| `--phase-split` | deprecated: vẫn nhận nhưng engine native bỏ qua |
 
 Tham số sai (ví dụ `--runs 0`, `--runs abc`) hoặc cấu hình case sai → in lỗi rõ ràng và exit 64,
 trước khi chạy bất kỳ case nào.

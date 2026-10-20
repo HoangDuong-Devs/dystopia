@@ -1,4 +1,4 @@
-# Engine native (v0.3 commit B)
+# Engine native (v0.3 commit C2a)
 
 Engine `native` chạy lõi Pi qua thư viện, thay vì gọi binary OCR. Commit B mới có
 **pha file**: mỗi file thay đổi một lượt agent, tool chỉ đọc, `report_finding` kiểm schema
@@ -6,11 +6,19 @@ ngay, giới hạn tool call/token, `meta.truncated`, `meta.per_file`, `meta.err
 tăng dần. Pha tổng, khử trùng lặp và prompt/rules
 thật là **commit C**.
 
+Commit C2a đưa mặc định của engine native về sát template review của Alibaba
+OpenCodeReview (OCR) @9867a3d: 100 lượt tool/file, ngân sách token tổng 0 = không giới hạn,
+8 file song song, timeout 15 phút/file và 300 giây/request, `read_file` 500 dòng,
+`grep` 100 dòng, `maxTokens` 16384 cho mỗi model.
+
 ```
 dystopia review --engine native --from <base> --to <head> [--dir <repo>] \
   [--max-tool-calls N] [--max-tokens N] [--phase-split F] [--concurrency N]
 dystopia models
 ```
+
+`--phase-split` vẫn được chấp nhận để không phá hợp đồng CLI nhưng **bị bỏ qua
+(deprecated)**; OCR không có khái niệm chia ngân sách theo pha. Không có cờ mới.
 
 ## 1. Kiến trúc
 
@@ -23,7 +31,7 @@ dystopia models
 | `lib/engine/native/finding.mjs` | `report_finding`, kiểm schema, sắp xếp finding |
 | `lib/engine/native/loop.mjs` | pha file, pool song song có giới hạn, ngân sách token/tool call, meta |
 | `lib/engine/native/driver-pi.mjs` | driver Pi SDK (`createAgentSession`, `noTools` + `customTools`) |
-| `lib/engine/native/limits.mjs` | chuẩn hóa `--max-tool-calls`, `--max-tokens`, `--phase-split`, `--concurrency` |
+| `lib/engine/native/limits.mjs` | chuẩn hóa `--max-tool-calls`, `--max-tokens`, `--concurrency`; hằng timeout/round có ghi nguồn OCR |
 | `lib/engine/native/prompts/file-review.md` | prompt hệ thống pha file (Kosma, pass 1 theo từng file) |
 | `lib/engine/native/prompts/cross-file.md` | prompt pass 2 cross-file của Kosma; **chưa dùng**, để dành cho pha cross-file sau này |
 | `agent/models.json` | provider `commandcode` của Dystopia; `apiKey` chỉ ghi **tên biến** `COMMANDCODE_API_KEY` |
@@ -72,10 +80,10 @@ branch khác, commit cũ) mà kết quả vẫn đúng. Engine chuẩn hóa `--t
 
 | Tool | Việc |
 |---|---|
-| `read_file(path, from?, to?)` | đọc nội dung file ở **head** bằng `git cat-file -p <head>:<path>`; tối đa **150 dòng** và **~12000 ký tự** mỗi lần; `from`/`to` là 1-based, bao gồm hai đầu. Không truyền dải thì mặc định đọc cửa sổ quanh hunk diff của file thay đổi (mỗi hunk ±40 dòng, gộp các cửa sổ chồng nhau) hoặc **150 dòng đầu** với file không đổi. Bị cắt thì kết quả có `[đã cắt: dòng X-Y; gọi lại với from/to]` kèm tổng số dòng |
+| `read_file(path, from?, to?)` | đọc nội dung file ở **head** bằng `git cat-file -p <head>:<path>`; tối đa **500 dòng** (OCR `internal/tool/file_read.go:12` `fileReadMaxLines = 500`) và **~60000 ký tự** (trần ký tự chỉ có ở Dystopia) mỗi lần; `from`/`to` là 1-based, bao gồm hai đầu. Không truyền dải thì đọc **từ dòng 1**, tối đa 500 dòng (không còn cửa sổ ±40 quanh hunk). Bị cắt thì kết quả có `[đã cắt: dòng X-Y; gọi lại với from/to]` kèm tổng số dòng |
 | `list_changed_files()` | `git diff --name-status` + `--numstat` base..head, kèm `+/-`; bỏ file lock/sinh tự động/binary |
-| `grep(pattern, path_glob)` | `git grep -n ... <head> -- <pathspec>`, bỏ tiền tố `<head>:` khỏi đường dẫn trong output; tối đa **60 dòng khớp** và **~8000 ký tự**, có ghi chú `[đã cắt: hiển thị X/Y dòng khớp; ...]` khi cắt |
-| `git_show(rev, path)` | chỉ nhận `rev` là base hoặc head; tối đa **200 dòng** và **~12000 ký tự**, có ghi chú khi cắt |
+| `grep(pattern, path_glob)` | `git grep -n ... <head> -- <pathspec>`, bỏ tiền tố `<head>:` khỏi đường dẫn trong output; tối đa **100 dòng khớp** (OCR `internal/tool/code_search.go:18` `gitGrepMaxCount = 100`) và **~60000 ký tự** (trần ký tự chỉ có ở Dystopia), có ghi chú `[đã cắt: hiển thị X/Y dòng khớp; ...]` khi cắt |
+| `git_show(rev, path)` | chỉ nhận `rev` là base hoặc head; tối đa **200 dòng** và **~12000 ký tự**, có ghi chú khi cắt. **Không có OCR tương đương**, giữ trần hiện tại của Dystopia |
 | `report_finding(...)` | xem mục 4 |
 
 Danh sách bỏ qua lấy từ `rules-overlay/ignore.txt` (nếu có) cộng mặc định:
@@ -124,28 +132,47 @@ sau cùng), và cả kết quả đi qua `validateResult` của commit A.
 ## 5. Vòng lặp và giới hạn
 
 1. Lấy file thay đổi (đã lọc), mỗi file lấy diff `base..head` của riêng file đó.
-2. Mỗi file một lượt agent, chạy song song tối đa `--concurrency` (mặc định **2**).
-3. Ngân sách token tổng chia theo pha: `--phase-split` (mặc định **0.7**) cho pha file,
-   phần còn lại để dành cho pha tổng ở commit C. Ngân sách pha file chia đều cho các file.
-4. Mỗi file giữ lại **20%** ngân sách (hằng `reportReserveRatio` trong `limits.mjs`) cho việc
-   báo cáo. Khi token chạm `ngân sách file - dự phòng` hoặc số tool call chạm
-   `--max-tool-calls - 2`, engine **không abort**: tool đọc bị khóa và trả
-   `hết ngân sách, hãy report_finding ngay`, rồi engine gửi **một lượt nhắc cuối** yêu cầu gọi
-   `report_finding` cho mọi lỗi đã thấy và dừng. Finding báo ở lượt cuối vẫn được giữ.
-   Chỉ khi vượt **trần cứng** (`--max-tool-calls` hoặc toàn bộ ngân sách token của file) mới
-   abort, giữ finding đã có và thêm file vào `meta.truncated`.
-5. File lỗi provider/stream (không phải `NATIVE_AUTH`/`NATIVE_RATE`) được **retry một lần với
+2. Mỗi file một session agent; số file chạy song song tối đa `--concurrency`
+   (mặc định **8**, OCR `cmd/opencodereview/shared_flags.go:233`).
+3. `--max-tool-calls` (mặc định **100/file**, OCR `task_template.json:38` +
+   `internal/llmloop/loop.go:388`). Khi số tool call chạm trần, tool đọc trả lỗi
+   `... hãy report_finding ngay`; engine chạy **đúng một grace round** (`FINAL_PROMPT`)
+   trong đó chỉ `report_finding` được phép, tool khác trả lỗi bảo model báo ngay
+   (OCR `loop.go:560-566`). Sau grace round file dừng, finding đã báo vẫn giữ,
+   file vào `meta.truncated` với `reason: "max-tool-calls"`.
+4. `--max-tokens` (**mặc định 0 = không giới hạn**, OCR `shared_flags.go:238` và `:60`).
+   Khi > 0, tổng token của **cả lần review** được kiểm trước mỗi lượt LLM:
+   file đang chạy được **một grace round** rồi dừng với `reason: "budget"`;
+   không file mới nào được khởi động, các file đó vào `meta.truncated` và
+   `meta.errors` với `error: "skipped-budget"`. Không abort session.
+5. File tự nhiên dừng khi model kết thúc lượt mà không gọi tool. Nếu có re-prompt,
+   đếm số lượt assistant liên tiếp không gọi tool và dừng ở **3**
+   (OCR `loop.go:389` `maxConsecutiveEmptyRounds = 3`).
+6. Timeout: **15 phút/file** (× số review round, hiện là 1; OCR
+   `shared_flags.go:234` + `:52`, `agent.go:677`) và **300 giây/request LLM**
+   (OCR `shared_flags.go:52` `OCR_LLM_TIMEOUT` mặc định 300). File quá hạn bị abort
+   và vào `meta.errors` là `{file, error: "timeout"}`; file khác vẫn chạy.
+7. Lỗi 429/rate được **retry có backoff** (mặc định tối đa 3 lần, 1s rồi nhân đôi).
+   Mỗi lần retry cộng vào `retries` của file và `retries_total` của `meta`.
+   Hết retry vẫn là `NATIVE_RATE`, exit `23`.
+8. File lỗi provider/stream (không phải `NATIVE_AUTH`/`NATIVE_RATE`) được **retry một lần với
    session mới**. Lỗi lần hai vào `meta.errors` dạng `{file, error}` (error đã scrub key),
    finding của các file khác vẫn giữ. Review trả exit `0` nếu còn ít nhất một file chạy xong;
-   exit `20` nếu mọi file đều lỗi.
-6. Khi có `--output`, sau mỗi file engine ghi **nguyên tử** (file tạm + rename) JSON finding
+   exit `20` nếu mọi file đều lỗi (kể cả khi tất cả bị `skipped-budget`).
+9. Khi có `--output`, sau mỗi file engine ghi **nguyên tử** (file tạm + rename) JSON finding
    đến hiện tại với `meta.partial: true`. Lần ghi cuối đặt `meta.partial: false`, nên crash
    giữa chừng vẫn giữ được các file đã xong.
-7. Không có tool ghi file/chạy lệnh cho agent.
+10. Không có tool ghi file/chạy lệnh cho agent.
 
-`meta.per_file` là mảng `{file, tokens_in, tokens_out, tool_calls, truncated, rejected_reports,
-final_text}` cho từng file (cùng dữ liệu với `meta.phases.file.files`); `meta.errors` liệt kê
-file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cuối.
+`meta.per_file` là mảng `{file, tokens_in, tokens_out, tool_calls, rounds, retries, truncated,
+reason, rejected_reports, final_text}` cho từng file (cùng dữ liệu với
+`meta.phases.file.files`); `meta.errors` liệt kê file lỗi và `meta.partial` cho biết lần ghi
+hiện tại là tạm hay cuối. `meta.retries_total` là tổng retry 429 của cả review.
+
+- `rounds` là số assistant message (lượt) của file; driver Pi báo qua `onRound`, driver
+  không báo thì engine đếm mỗi `prompt()` là một lượt.
+- `retries` là số lần retry 429 của file.
+- `reason` là `"budget"`, `"max-tool-calls"`, `"empty-rounds"` hoặc `null`.
 
 - `rejected_reports: {count, reasons}` đếm **mọi** lần gọi `report_finding` bị validation từ
   chối trong file đó; `reasons` là lý do từ chối (đã scrub `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN`),
@@ -168,14 +195,16 @@ file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cu
   "duration_ms": 1500,
   "tool_calls": 4,
   "truncated": ["src/file1.ts"],
-  "concurrency": 2,
-  "limits": { "max_tool_calls": 40, "max_tokens": 400000, "phase_split": 0.7 },
+  "concurrency": 8,
+  "limits": { "max_tool_calls": 100, "max_tokens": 0 },
   "per_file": [
-    { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true,
+    { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4,
+      "rounds": 2, "retries": 0, "truncated": true, "reason": "budget",
       "rejected_reports": { "count": 1, "reasons": ["line 999 vượt quá 3 dòng của \"src/file1.ts\" ở head"] },
       "final_text": "Đã báo 2 finding cho file này." }
   ],
   "errors": [{ "file": "src/file2.ts", "error": "Pi báo lỗi provider: Stream ended without finish_reason" }],
+  "retries_total": 0,
   "partial": false,
   "phases": {
     "file": {
@@ -184,7 +213,8 @@ file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cu
       "tool_calls": 4,
       "duration_ms": 1200,
       "files": [
-        { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4, "truncated": true,
+        { "file": "src/file1.ts", "tokens_in": 1200, "tokens_out": 300, "tool_calls": 4,
+          "rounds": 2, "retries": 0, "truncated": true, "reason": "budget",
           "rejected_reports": { "count": 1, "reasons": ["line 999 vượt quá 3 dòng của \"src/file1.ts\" ở head"] },
           "final_text": "Đã báo 2 finding cho file này." }
       ]
@@ -204,7 +234,11 @@ file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cu
   `COMMANDCODE_API_KEY` mà `models.json` trỏ tới;
 - `SessionManager.inMemory()`, settings trong bộ nhớ (tắt compaction/retry);
 - `noTools: true` + `customTools` đúng 5 tool ở trên;
-- model lấy từ `coder.mjs`, thinking `off`, system prompt mặc định là `prompts/file-review.md`.
+- model lấy từ `coder.mjs`; driver **không truyền `thinkingLevel`** và `agent/models.json`
+  không bật `reasoning`, nên request provider không có `reasoning_effort`, `reasoning`,
+  `thinking`, `enable_thinking` hay `temperature`. OCR cũng không gửi trường reasoning nào
+  (`internal/llm/client.go:641,953`: chỉ temperature nếu được cấu hình);
+- system prompt mặc định là `prompts/file-review.md`.
 
 Sau `session.prompt`, driver kiểm assistant message cuối. Nếu `stopReason` là `error` (hoặc
 `prompt` ném lỗi), driver ném `EngineError` kèm thông điệp lỗi provider, đã thay mọi giá trị
@@ -224,6 +258,35 @@ file/biến hoặc nội dung lỗi provider đã scrub.
 
 Test không gọi LLM thật: truyền driver giả qua tham số `driver` của adapter hoặc đặt
 `DYSTOPIA_NATIVE_DRIVER=<file .mjs>` (file export `createDriver(options)`).
+
+### 6.1. Mặc định so với OCR @9867a3d
+
+| Mặc định | Dystopia native | OCR | Nguồn OCR |
+|---|---|---|---|
+| Tool call/file | 100 | 100 | `internal/config/template/task_template.json:38`, `internal/llmloop/loop.go:388` |
+| Lượt assistant rỗng liên tiếp | 3 | 3 | `internal/llmloop/loop.go:389` |
+| Ngân sách token tổng | 0 = không giới hạn | 0 = không giới hạn | `cmd/opencodereview/shared_flags.go:238`, `:60` |
+| Concurrency | 8 | 8 | `cmd/opencodereview/shared_flags.go:233` |
+| Timeout/file | 15 phút × review round (hiện 1) | 15 phút × `MAX_REVIEW_ROUNDS` | `shared_flags.go:234`, `:52`, `agent/agent.go:677` |
+| Timeout/request LLM | 300 s | 300 s (`OCR_LLM_TIMEOUT`) | `shared_flags.go:52` |
+| `maxTokens` model | 16384 | `MAX_COMPLETION_TOKENS` 16384 | `task_template.json:45` |
+| `read_file` | 500 dòng, không range → từ dòng 1 | 500 dòng | `internal/tool/file_read.go:12` |
+| `grep` | 100 dòng khớp | 100 | `internal/tool/code_search.go:18` |
+| Grace round | 1 lượt, chỉ `report_finding` | `runGraceRound` | `internal/llmloop/loop.go:560-566` |
+
+Trần ký tự `read_file`/`grep` (60000) và trần `git_show` (200 dòng/12000 ký tự) là của
+Dystopia; OCR không có hằng tương đương cho `git_show`.
+
+### 6.2. Khác biệt đã biết so với OCR
+
+- **ReLocation chưa có**: OCR dùng `internal/llmloop/loop.go:760-800` và
+  `internal/diff/relocation.go` để dời finding khi dòng bị lệch; Dystopia chưa làm.
+- **Plan/grouping chưa có**: OCR dùng `task_template.json:39-42` và `internal/agent/grouping.go`;
+  Dystopia chỉ có pha file.
+- **Context ceiling 200k + memory compression chưa có**: OCR `task_template.json:44` và
+  `internal/llmloop/compression.go`; sẽ làm ở C2b.
+- **`MAX_REVIEW_ROUNDS = 2` chưa có**: OCR `task_template.json:43`; hiện review round = 1.
+  C2b sẽ thêm context ceiling/compression và review round 2.
 
 ## 7. Biến môi trường
 
@@ -262,19 +325,22 @@ launcher map `OCR_LLM_TOKEN` từ `COMMANDCODE_API_KEY` khi biến này chưa đ
 node --test test/*.test.mjs
 ```
 
-- `test/native-tools.test.mjs`: path traversal/tuyệt đối/symlink/`.git`, `read_file` cắt 150
-dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `git_show` 200 dòng,
+- `test/native-tools.test.mjs`: path traversal/tuyệt đối/symlink/`.git`, `read_file` cắt 500
+dòng (từ dòng 1 khi không có range), `grep` 100 dòng, `git_show` 200 dòng,
   env allowlist của `sandbox-exec` (không lọt key/token), `git_show` rev lạ, lọc file bỏ qua;
   test đọc head qua git khi checkout ở đĩa là commit cũ (`read_file`/`grep` trả nội dung head,
   file đã xoá ở head bị từ chối); một test chạy thật qua `sandbox-exec` và tự skip khi thiếu
   `CODER_HOME`/bwrap.
 - `test/native-finding.test.mjs`: từ chối severity sai, line ngoài head, file không đổi,
   evidence rỗng; agent sửa lại trong cùng lượt.
-- `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, ngân sách dự phòng
-  report (ngừng đọc, lượt cuối vẫn giữ finding), `maxToolCalls-2`, token/phase-split,
-  concurrency, `meta.model`, giới hạn mặc định; `rejected_reports` (count/reasons, cap 20) và
-  `final_text` (500 ký tự, scrub key) trong `meta.per_file`; prompt `file-review.md` được
-  truyền cho driver.
+- `test/native-loop.test.mjs`: `max-tool-calls` → grace round chỉ report, ngân sách token tổng
+  → grace + `reason: "budget"`, mặc định 100/0/8, timeout, concurrency, `meta.model`,
+  `meta.per_file` (`rounds`, `retries`, `rejected_reports`, `final_text`), prompt
+  `file-review.md` được truyền cho driver.
+- `test/native-c2a.test.mjs`: khóa hằng OCR, `maxTokens` trong `agent/models.json`, budget
+  `skipped-budget`, retry 429 + `retries_total`, timeout file, report_finding theo head
+  (Kosma: commit A 3 dòng/B 10 dòng), không có `thinkingLevel`; test payload thật qua Pi SDK
+  dùng HTTP server 127.0.0.1 (tự skip nếu không có SDK).
 - `test/native-isolation.test.mjs`: một file lỗi stream hai lần → file khác vẫn có finding,
   `meta.errors` đúng file, output `partial: true` ghi sau file đầu, exit 0; lỗi một lần rồi
   thành công → không có `meta.errors`; mọi file lỗi → exit 20.

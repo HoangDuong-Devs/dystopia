@@ -122,7 +122,16 @@ export async function createAgentSession() {
     getLastAssistantText() {
       return last?.content?.[0]?.text ?? '';
     },
-    async prompt() {
+    async prompt(text) {
+      if (text?.includes('Đã hết lượt tool')) {
+        emit({
+          role: 'assistant',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'đã báo cáo' }],
+          usage: { input: 0, output: 0 },
+        });
+        return;
+      }
       if (SCENARIO.usage) {
         emit({
           role: 'assistant',
@@ -130,9 +139,11 @@ export async function createAgentSession() {
           content: [{ type: 'text', text: 'đang chạy' }],
           usage: { input: SCENARIO.usage.input, output: SCENARIO.usage.output },
         });
-        const deadline = Date.now() + 2000;
-        while (!aborted && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 5));
+        if (SCENARIO.aborted) {
+          const deadline = Date.now() + 2000;
+          while (!aborted && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
         }
       }
       if (SCENARIO.aborted) {
@@ -242,26 +253,23 @@ async function runCli(t, scenario, extraArgs = []) {
   }
 }
 
-test('(a) vượt ngân sách token → abort → message aborted: review exit 0, meta.truncated', async (t) => {
-  const result = await runCli(
-    t,
-    { usage: { input: 900, output: 200 }, aborted: true },
-    ['--max-tokens', '1000'],
-  );
+test('(a) vượt ngân sách token → grace round, không abort: review exit 0, meta.truncated', async (t) => {
+  const result = await runCli(t, { usage: { input: 900, output: 200 } }, ['--max-tokens', '1000']);
 
   assert.equal(result.code, 0, result.stderr);
   assert.doesNotMatch(result.stderr, /Pi báo lỗi provider|operation was aborted/);
   const body = JSON.parse(await readFile(result.output, 'utf8'));
   assert.deepEqual(body.meta.truncated, ['src/file1.ts']);
+  assert.equal(body.meta.per_file[0].reason, 'budget');
   assert.equal(body.meta.engine, 'native');
   assert.ok(Array.isArray(body.findings));
   assert.ok(body.meta.tokens_in >= 900);
 });
 
-test('(b) 401 vẫn exit 21 dù file đã truncated', async (t) => {
+test('(b) 401 vẫn exit 21 dù vừa vượt ngân sách', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
   const { factory, state } = fakeDriverFactory(async (options) => {
-    // Vượt ngân sách → loop markTruncated + abort; sau đó provider trả 401.
+    // Vượt ngân sách rồi provider trả 401: lỗi xác thực vẫn phải nổi lên.
     options.onUsage({ tokens_in: 900, tokens_out: 200 });
     throw new EngineError('Pi báo lỗi xác thực provider (401)', { code: 'NATIVE_AUTH', exitCode: 21 });
   });
@@ -274,21 +282,18 @@ test('(b) 401 vẫn exit 21 dù file đã truncated', async (t) => {
       return true;
     },
   );
-  assert.equal(state.aborted, 1);
+  assert.equal(state.aborted, 0);
 });
 
-test('(c) chạm giới hạn tool call → abort → NATIVE_ERROR của Pi vẫn là truncated', async (t) => {
+test('(c) chạm giới hạn tool call → không abort; NATIVE_ERROR của Pi vẫn là truncated', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
   const { factory, state } = fakeDriverFactory(async (options, ctx) => {
     await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
-    try {
-      await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
-      assert.fail('phải chạm giới hạn tool call');
-    } catch (error) {
-      assert.equal(error.code, 'NATIVE_TRUNCATED');
-    }
-    assert.equal(ctx.aborted(), true);
-    // Pi kết thúc lượt aborted sau khi engine gọi abort(); driver cũ ném lỗi này.
+    const blocked = await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
+    assert.match(blocked, /report_finding ngay/);
+    assert.equal(ctx.aborted(), false);
+    // Provider lỗi ngay sau khi engine đánh dấu truncated: lỗi này không được
+    // biến thành meta.errors.
     throw new EngineError('Pi báo lỗi provider: This operation was aborted', {
       code: 'NATIVE_ERROR',
       exitCode: 20,
@@ -299,5 +304,6 @@ test('(c) chạm giới hạn tool call → abort → NATIVE_ERROR của Pi vẫ
   assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
   assert.equal(result.meta.phases.file.files[0].truncated, true);
   assert.equal(result.meta.tool_calls, 1);
-  assert.equal(state.aborted, 1);
+  assert.equal(result.meta.errors.length, 0);
+  assert.equal(state.aborted, 0);
 });

@@ -1,5 +1,5 @@
 // Test vòng lặp pha file của engine native với driver giả: giới hạn tool call,
-// ngân sách token/phase-split, concurrency, meta.model, truncated giữ findings.
+// ngân sách token tổng, grace round, concurrency, meta.model, truncated giữ findings.
 // Không gọi LLM thật.
 
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 import { review } from '../lib/engine/native/index.mjs';
-import { parseLimits, splitBudget } from '../lib/engine/native/limits.mjs';
+import { DEFAULTS, LOOP_LIMITS, parseLimits } from '../lib/engine/native/limits.mjs';
 import { makeNativeRepo } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -85,114 +85,126 @@ function optionsFor(repo, factory, limits = {}) {
   };
 }
 
-test('max-tool-calls: chạm giới hạn → truncated, findings trước đó vẫn giữ', async (t) => {
+test('max-tool-calls: chạm giới hạn → grace round chỉ cho report_finding, findings vẫn giữ', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
-  let limitCode = null;
-  const { factory, state } = fakeDriverFactory(async (options) => {
-    await options.tools.report_finding(validFinding());
-    await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
-    try {
-      await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
-    } catch (error) {
-      limitCode = error.code;
+  let blocked = null;
+  let graceBlocked = null;
+  let finalTurn = false;
+  let prompts = 0;
+  const { factory, state } = fakeDriverFactory(async (options, ctx) => {
+    prompts += 1;
+    if (ctx.text?.includes('Đã hết lượt tool')) {
+      finalTurn = true;
+      graceBlocked = await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
+      await options.tools.report_finding(validFinding({ line: 2 }));
+      return;
     }
+    await options.tools.report_finding(validFinding({ line: 2 }));
+    await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
+    blocked = await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
   });
 
   const result = await review(optionsFor(repo, factory, { maxToolCalls: 2 }));
 
-  assert.equal(limitCode, 'NATIVE_TRUNCATED');
+  assert.match(blocked, /report_finding ngay/);
+  assert.match(graceBlocked, /chỉ được gọi report_finding/);
+  assert.equal(finalTurn, true);
+  assert.equal(prompts, 2);
   assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
-  assert.equal(result.findings.length, 1);
-  assert.equal(result.findings[0].line, 2);
-  assert.equal(result.meta.tool_calls, 2);
-  assert.equal(result.meta.phases.file.files[0].truncated, true);
+  assert.equal(result.meta.per_file[0].reason, 'max-tool-calls');
+  assert.equal(result.meta.per_file[0].rounds, 2);
+  assert.equal(result.findings.length, 2);
+  assert.equal(result.meta.tool_calls, 3);
   assert.equal(state.disposed, 1);
 });
 
-test('ngân sách dự phòng report: ngừng đọc, lượt cuối vẫn giữ finding', async (t) => {
+test('ngân sách token tổng: vượt → grace round chỉ report, ghi reason budget', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
-  let reserveMessage = null;
+  let budgetBlocked = null;
   let prompts = 0;
   let finalTurn = false;
   const { factory } = fakeDriverFactory(async (options, ctx) => {
     prompts += 1;
-    if (ctx.text?.includes('dự phòng cho việc báo cáo')) {
+    if (ctx.text?.includes('Đã hết lượt tool')) {
       finalTurn = true;
       await options.tools.report_finding(validFinding());
       return;
     }
-    options.onUsage({ tokens_in: 450, tokens_out: 0 });
-    reserveMessage = await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
+    options.onUsage({ tokens_in: 1200, tokens_out: 0 });
+    budgetBlocked = await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
   });
 
-  const result = await review(optionsFor(repo, factory, { maxTokens: 1000, phaseSplit: 0.5 }));
+  const result = await review(optionsFor(repo, factory, { maxTokens: 1000 }));
 
-  assert.equal(reserveMessage, 'hết ngân sách, hãy report_finding ngay');
+  assert.match(budgetBlocked, /vượt ngân sách token/);
   assert.equal(prompts, 2);
   assert.equal(finalTurn, true);
   assert.equal(result.findings.length, 1);
   assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
-  assert.equal(result.meta.tokens_in, 450);
+  assert.equal(result.meta.per_file[0].reason, 'budget');
+  assert.equal(result.meta.tokens_in, 1200);
   assert.equal(result.meta.tokens_out, 0);
-  assert.equal(result.meta.phases.file.tokens_in, 450);
+  assert.equal(result.meta.phases.file.tokens_in, 1200);
+  assert.equal(result.meta.limits.max_tokens, 1000);
 });
 
-test('chạm maxToolCalls-2: ngừng đọc, gửi lượt cuối để report', async (t) => {
+test('chạm maxToolCalls: ngừng đọc, gửi grace round để report', async (t) => {
   const repo = await makeNativeRepo(t, { files: 1 });
   let blocked = null;
   let finalTurn = false;
   const { factory } = fakeDriverFactory(async (options, ctx) => {
-    if (ctx.text?.includes('dự phòng cho việc báo cáo')) {
+    if (ctx.text?.includes('Đã hết lượt tool')) {
       finalTurn = true;
       await options.tools.report_finding(validFinding());
       return;
     }
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       await options.tools.read_file({ path: 'src/file1.ts', from: 1, to: 1 });
     }
     blocked = await options.tools.read_file({ path: 'src/file1.ts', from: 2, to: 2 });
   });
 
-  const result = await review(optionsFor(repo, factory, { maxToolCalls: 5, maxTokens: 10_000 }));
+  const result = await review(optionsFor(repo, factory, { maxToolCalls: 4 }));
 
-  assert.equal(blocked, 'hết ngân sách, hãy report_finding ngay');
+  assert.match(blocked, /report_finding ngay/);
   assert.equal(finalTurn, true);
   assert.equal(result.findings.length, 1);
   assert.deepEqual(result.meta.truncated, ['src/file1.ts']);
-  assert.equal(result.meta.tool_calls, 4);
+  assert.equal(result.meta.per_file[0].reason, 'max-tool-calls');
+  assert.equal(result.meta.tool_calls, 5);
 });
 
-test('splitBudget: pha file 70%, phần còn lại để dành pha tổng, chia đều', () => {
-  assert.deepEqual(splitBudget(1000, 1, 0.7), { fileBudget: 700, summaryBudget: 300, perFile: 700 });
-  assert.deepEqual(splitBudget(1000, 2, 0.7), { fileBudget: 700, summaryBudget: 300, perFile: 350 });
-  assert.deepEqual(splitBudget(10, 20, 0.7), { fileBudget: 7, summaryBudget: 3, perFile: 1 });
-});
-
-test('parseLimits: mặc định 40 tool call/file, 400000 token, 0.7, 2; giá trị sai exit 64', () => {
+test('parseLimits: mặc định OCR 100 tool call/file, 0 token (không giới hạn), 8, timeout; phase-split bị bỏ qua', () => {
+  // OCR @9867a3d: task_template.json:38, shared_flags.go:233-238, :52, agent.go:677.
   const limits = parseLimits({});
-  assert.equal(limits.maxToolCalls, 40);
-  assert.equal(limits.maxTokens, 400_000);
-  assert.equal(limits.phaseSplit, 0.7);
-  assert.equal(limits.concurrency, 2);
-  for (const bad of [{ maxToolCalls: 0 }, { maxTokens: -1 }, { phaseSplit: 1 }, { concurrency: 1.5 }]) {
+  assert.equal(limits.maxToolCalls, 100);
+  assert.equal(limits.maxTokens, 0);
+  assert.equal(limits.concurrency, 8);
+  assert.equal(limits.fileTimeoutMs, 15 * 60 * 1000);
+  assert.equal(limits.requestTimeoutMs, 300 * 1000);
+  assert.equal(LOOP_LIMITS.maxConsecutiveEmptyRounds, 3);
+  assert.equal(DEFAULTS.maxToolCalls, 100);
+  assert.deepEqual(parseLimits({ phaseSplit: 0.3 }), limits);
+  assert.equal(parseLimits({ maxTokens: 0 }).maxTokens, 0);
+  for (const bad of [{ maxToolCalls: 0 }, { maxTokens: -1 }, { concurrency: 1.5 }]) {
     assert.throws(
       () => parseLimits(bad),
-      (error) => error.exitCode === 64 && /phải là|phase-split/.test(error.message),
+      (error) => error.exitCode === 64 && /phải là/.test(error.message),
       JSON.stringify(bad),
     );
   }
 });
 
-test('concurrency mặc định 2: không có quá 2 lượt agent chạy đồng thời', async (t) => {
-  const repo = await makeNativeRepo(t, { files: 4 });
+test('concurrency mặc định 8: không có quá 8 lượt agent chạy đồng thời', async (t) => {
+  const repo = await makeNativeRepo(t, { files: 10 });
   const { factory, state } = fakeDriverFactory(async () => {
     await sleep(40);
   });
 
   await review(optionsFor(repo, factory));
 
-  assert.equal(state.sessions, 4);
-  assert.equal(state.maxActive, 2);
+  assert.equal(state.sessions, 10);
+  assert.equal(state.maxActive, 8);
 });
 
 test('--concurrency 1 chạy tuần tự, 3 chạy song song tối đa 3', async (t) => {
@@ -228,7 +240,7 @@ test('meta.model = model driver báo, meta.engine native, tokens/tool_calls theo
   assert.equal(result.meta.tokens_out, 5);
   assert.equal(result.meta.tool_calls, 1);
   assert.equal(result.meta.phases.file.tool_calls, 1);
-  assert.equal(result.meta.concurrency, 2);
+  assert.equal(result.meta.concurrency, 8);
   assert.equal(typeof result.meta.duration_ms, 'number');
   assert.equal(result.meta.version, '0.3.0-dev');
   assert.deepEqual(result.meta.truncated, []);

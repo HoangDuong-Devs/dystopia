@@ -36,11 +36,15 @@ review engine (default `ocr`) and `--dir <repo>` the repository (default: curren
 See `docs/engine.md` for the engine contract, registry and how to add one, and
 `docs/ocr-output.md` for the schema and severity mapping.
 
-The `native` engine uses the Pi core in-process instead of the OCR binary. Commit B has the
-file phase only: one agent turn per changed file, read-only tools (`read_file`,
+The `native` engine uses the Pi core in-process instead of the OCR binary. Commit C2a has the
+file phase only: one agent session per changed file, read-only tools (`read_file`,
 `list_changed_files`, `grep`, `git_show`), `report_finding` validated on every call, and
-`--max-tool-calls` / `--max-tokens` / `--phase-split` / `--concurrency` limits with
-`meta.truncated`. Native requires `--from` and `--to` (no `-c`). Its key and model config are its
+defaults matching Alibaba OpenCodeReview @9867a3d: 100 tool calls per file, total token budget
+`--max-tokens 0` (unlimited), concurrency 8, 500-line `read_file`, 100-match `grep`, 15-minute
+per-file timeout, 300-second per-request timeout, and a single `report_finding`-only grace
+round. `--phase-split` is still accepted but ignored (deprecated); `meta.truncated`,
+`meta.per_file.rounds/retries` and `meta.retries_total` record what happened. Native requires
+`--from` and `--to` (no `-c`). Its key and model config are its
 own: the launcher reads `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}` (mode broader than 600 → exit
 64) and the agent dir is `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`; it never uses
 `$CODER_HOME/agent` or MTH's `.env`. Models come from `agent/models.json` (provider
