@@ -1,0 +1,68 @@
+{
+  "status": "completed",
+  "llm": {
+    "model": "fake/model-1",
+    "provider": "fake"
+  },
+  "message": "review xong",
+  "summary": {
+    "files_reviewed": 2,
+    "comments": 4,
+    "total_tokens": 15234,
+    "input_tokens": 12000,
+    "output_tokens": 3234,
+    "cache_read_tokens": 800,
+    "elapsed": "15m49s"
+  },
+  "tool_calls": 7,
+  "comments": [
+    {
+      "path": "src/file1.ts",
+      "start_line": 12,
+      "end_line": 14,
+      "severity": "medium",
+      "category": "error-handling",
+      "content": "Lỗi bị nuốt trong khối catch. Nên ghi log và trả lỗi ra ngoài.",
+      "existing_code": "try { run(); } catch (e) {}",
+      "suggestion_code": "try { run(); } catch (e) { log(e); throw e; }"
+    },
+    {
+      "path": "src/file1.ts",
+      "start_line": 40,
+      "end_line": 41,
+      "severity": "high",
+      "category": "security",
+      "content": "Chuỗi truy vấn được ghép trực tiếp từ input người dùng. Dùng tham số hóa.",
+      "existing_code": "db.query('select * from t where id=' + id)"
+    },
+    {
+      "path": "src/file2.ts",
+      "start_line": 3,
+      "end_line": 3,
+      "severity": "low",
+      "category": "style",
+      "content": "Tên biến viết tắt khó đọc.",
+      "existing_code": "const x = 1;"
+    },
+    {
+      "path": "src/file2.ts",
+      "start_line": 88,
+      "end_line": 90,
+      "severity": "critical",
+      "category": "unknown-thing",
+      "content": "Mức lạ để kiểm tra hạ cấp.\nDòng thứ hai không vào claim.",
+      "existing_code": "weird();"
+    }
+  ],
+  "groups": [],
+  "session_id": "sess-fake-1",
+  "manifest": {
+    "input": {
+      "resolved_base": "aaaa1111",
+      "resolved_head": "bbbb2222"
+    }
+  },
+  "retry_report": {
+    "retries": 0
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "status": "cancelled",
+  "llm": {
+    "model": "fake/model-1"
+  },
+  "message": "review bị hủy",
+  "summary": {
+    "files_reviewed": 0,
+    "comments": 0,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "elapsed": "1h2m3s"
+  },
+  "tool_calls": 0,
+  "comments": null,
+  "groups": [],
+  "session_id": "sess-fake-2",
+  "manifest": {
+    "input": {
+      "resolved_base": "cccc3333",
+      "resolved_head": "dddd4444"
+    }
+  },
+  "retry_report": {}
+}

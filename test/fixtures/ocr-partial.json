@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "llm": {
+    "model": "fake/model-2"
+  },
+  "message": "review xong",
+  "summary": {
+    "files_reviewed": 1,
+    "comments": 1,
+    "input_tokens": 42,
+    "elapsed": "9.5s"
+  },
+  "comments": [
+    {
+      "path": "src/file3.ts",
+      "start_line": 7,
+      "end_line": 8,
+      "severity": "low",
+      "category": "docs",
+      "content": "Thiếu mô tả cho hàm công khai."
+    }
+  ],
+  "manifest": {
+    "input": {}
+  }
+}

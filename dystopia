@@ -4,7 +4,7 @@ set -euo pipefail
 DYSTOPIA_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ENV_FILE="${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}"
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-BIN="$DYSTOPIA_HOME/bin/opencodereview"
+BIN="${DYSTOPIA_OCR_BIN:-$DYSTOPIA_HOME/bin/opencodereview}"
 [ -x "$BIN" ] || { echo "dystopia: chưa build, chạy $DYSTOPIA_HOME/install.sh" >&2; exit 127; }
 if [ -z "${OCR_LLM_TOKEN:-}" ] && [ -n "${COMMANDCODE_API_KEY:-}" ]; then
   export OCR_LLM_TOKEN="$COMMANDCODE_API_KEY"
@@ -22,9 +22,61 @@ case "${1:-}" in review|r|scan)
   fi;;
 esac
 case "${1:-}" in review|r)
-  has_fmt=0
-  for a in "$@"; do case "$a" in --format|--format=*|-f|-f=*) has_fmt=1;; esac; done
-  if [ $has_fmt = 0 ]; then shift; exec "$BIN" review --format json "${add_rule[@]}" "$@"; fi;;
+  shift
+  has_fmt=0; has_raw=0
+  for a in "$@"; do
+    case "$a" in
+      --format|--format=*|-f|-f=*) has_fmt=1;;
+      --raw) has_raw=1;;
+    esac
+  done
+  if [ $has_raw = 1 ]; then
+    # --raw: hành vi cũ, trả nguyên output OCR (bỏ cờ --raw của wrapper).
+    passthrough=()
+    for a in "$@"; do
+      case "$a" in --raw|--text) ;; *) passthrough+=("$a");; esac
+    done
+    if [ $has_fmt = 0 ]; then
+      exec "$BIN" review --format json "${add_rule[@]}" "${passthrough[@]}"
+    fi
+    exec "$BIN" review "${add_rule[@]}" "${passthrough[@]}"
+  fi
+  if [ $has_fmt = 1 ]; then
+    # Người gọi tự chọn format: tôn trọng, không chuẩn hóa.
+    exec "$BIN" review "${add_rule[@]}" "$@"
+  fi
+  # Mặc định: OCR ghi JSON thô vào file tạm, đo thời gian, rồi chuẩn hóa.
+  text=0; out=""; rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --text) text=1; shift;;
+      --output|-o)
+        [ $# -ge 2 ] || { echo "dystopia: $1 cần giá trị" >&2; exit 2; }
+        out="$2"; shift 2;;
+      --output=*) out="${1#--output=}"; shift;;
+      -o=*) out="${1#-o=}"; shift;;
+      *) rest+=("$1"); shift;;
+    esac
+  done
+  tmp="$(mktemp "${TMPDIR:-/tmp}/dystopia-XXXXXX.json")"
+  trap 'rm -f "$tmp"' EXIT
+  start_ns="$(date +%s%N)"
+  set +e
+  "$BIN" review --format json --output "$tmp" "${add_rule[@]}" "${rest[@]}" >&2
+  ocr_rc=$?
+  set -e
+  end_ns="$(date +%s%N)"
+  [ $ocr_rc -eq 0 ] || exit $ocr_rc
+  [ -s "$tmp" ] || { echo "dystopia: OCR không ghi output vào $tmp" >&2; exit 1; }
+  duration_ms=$(( (end_ns - start_ns) / 1000000 ))
+  norm_args=("$tmp" --duration-ms "$duration_ms")
+  if [ $text = 1 ]; then norm_args+=(--text); fi
+  if [ -n "$out" ]; then
+    node "$DYSTOPIA_HOME/lib/normalize.mjs" "${norm_args[@]}" > "$out"
+  else
+    node "$DYSTOPIA_HOME/lib/normalize.mjs" "${norm_args[@]}"
+  fi
+  exit 0;;
 esac
 if [ ${#add_rule[@]} -gt 0 ]; then cmd="$1"; shift; exec "$BIN" "$cmd" "${add_rule[@]}" "$@"; fi
 exec "$BIN" "$@"
