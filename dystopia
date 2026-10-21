@@ -48,7 +48,7 @@ if [ "${1:-}" = bench ]; then
 fi
 # models chỉ cần agent/models.json của Dystopia, không cần binary OCR.
 if [ "${1:-}" = models ]; then
-  exec node "$INSTALL_DIR/lib/engine/native/coder.mjs" models
+  exec node "$INSTALL_DIR/lib/engine/native/mth.mjs" models
 fi
 BIN="${DYSTOPIA_OCR_BIN:-$INSTALL_DIR/bin/opencodereview}"
 # review (trừ --raw và --format tự chọn) đi qua hợp đồng engine trong node.

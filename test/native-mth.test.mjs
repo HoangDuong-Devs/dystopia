@@ -1,5 +1,5 @@
 // Test cấu hình model riêng của Dystopia: đọc agent/models.json (không chạy
-// `coder models`, không cần CODER_HOME), chọn model mặc định khác model viết
+// `mth models`, không cần MTH_HOME), chọn model mặc định khác model viết
 // code, DYSTOPIA_MODEL lạ → exit 64, `dystopia models`. Không đọc auth/.env thật.
 
 import assert from 'node:assert/strict';
@@ -17,11 +17,11 @@ import {
   listModels,
   parseModelsConfig,
   resolveModel,
-} from '../lib/engine/native/coder.mjs';
+} from '../lib/engine/native/mth.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const CODER_MODULE = path.join(ROOT, 'lib', 'engine', 'native', 'coder.mjs');
+const MTH_MODULE = path.join(ROOT, 'lib', 'engine', 'native', 'mth.mjs');
 const DYSTOPIA = path.join(ROOT, 'dystopia');
 const MODELS_FILE = path.join(ROOT, 'agent', 'models.json');
 const API_KEY_FIELD = 'api' + 'Key';
@@ -42,8 +42,8 @@ async function makeDystopiaHome(t) {
 function bareEnv(extra = {}) {
   const env = { ...process.env };
   for (const name of [
-    'CODER_HOME',
-    'CODER_DEFAULT_MODEL',
+    'MTH_HOME',
+    'MTH_DEFAULT_MODEL',
     'DYSTOPIA_HOME',
     'DYSTOPIA_AGENT_DIR',
     'DYSTOPIA_ENV_FILE',
@@ -85,7 +85,7 @@ async function runCli(args, env) {
   }
 }
 
-test('listModels đọc agent/models.json của Dystopia, không cần CODER_HOME', async (t) => {
+test('listModels đọc agent/models.json của Dystopia, không cần MTH_HOME', async (t) => {
   const home = await makeDystopiaHome(t);
   const models = listModels({ env: bareEnv({ DYSTOPIA_HOME: home.home }) });
   assert.equal(models.length, 2);
@@ -154,7 +154,7 @@ test('model mặc định của Dystopia khác model viết code, theo thứ t�
   const chosen = resolveModel(models, { env: bareEnv() });
   assert.equal(chosen.model, 'deepseek/deepseek-v4.1-flash');
 
-  const otherCode = resolveModel(models, { env: bareEnv({ CODER_DEFAULT_MODEL: 'deepseek-v4.1-flash' }) });
+  const otherCode = resolveModel(models, { env: bareEnv({ MTH_DEFAULT_MODEL: 'deepseek-v4.1-flash' }) });
   assert.equal(otherCode.model, 'deepseek/deepseek-v4.1-flash-fast');
 
   const fallbackModels = parseModelsConfig(
@@ -164,12 +164,12 @@ test('model mặc định của Dystopia khác model viết code, theo thứ t�
       },
     }),
   );
-  const picked = resolveModel(fallbackModels, { env: bareEnv({ CODER_DEFAULT_MODEL: 'code-model' }) });
+  const picked = resolveModel(fallbackModels, { env: bareEnv({ MTH_DEFAULT_MODEL: 'code-model' }) });
   assert.equal(picked.model, 'z-model');
 
   const only = parseModelsConfig(JSON.stringify({ providers: { p: { models: [{ id: 'code-model' }] } } }));
   assert.throws(
-    () => resolveModel(only, { env: bareEnv({ CODER_DEFAULT_MODEL: 'code-model' }) }),
+    () => resolveModel(only, { env: bareEnv({ MTH_DEFAULT_MODEL: 'code-model' }) }),
     (error) => error.exitCode === 64 && /khác model viết code/.test(error.message),
   );
 });
@@ -204,7 +204,7 @@ test('formatModels đánh dấu model Dystopia và model viết code', async (t)
   assert.match(text, /commandcode\/deepseek\/deepseek-v4\.1-flash-fast.*\[code\]/);
 });
 
-test('dystopia models in danh sách, không cần CODER_HOME', async (t) => {
+test('dystopia models in danh sách, không cần MTH_HOME', async (t) => {
   const home = await makeDystopiaHome(t);
   const env = bareEnv({ DYSTOPIA_HOME: home.home, DYSTOPIA_ENV_FILE: home.envFile });
   const { code, stdout } = await runCli(['models'], env);
@@ -228,7 +228,7 @@ test('dystopia models thiếu models.json → exit 64, lỗi rõ', async (t) => 
   assert.match(stderr, /DYSTOPIA_HOME/);
 });
 
-test('review --engine native thiếu CODER_HOME → exit 64 (chỉ cần cho sandbox-exec)', async (t) => {
+test('review --engine native thiếu MTH_HOME → exit 64 (chỉ cần cho sandbox-exec)', async (t) => {
   const home = await makeDystopiaHome(t);
   const env = bareEnv({ DYSTOPIA_HOME: home.home, DYSTOPIA_ENV_FILE: home.envFile });
   const { code, stderr } = await runCli(
@@ -236,8 +236,34 @@ test('review --engine native thiếu CODER_HOME → exit 64 (chỉ cần cho san
     env,
   );
   assert.equal(code, 64);
-  assert.match(stderr, /CODER_HOME/);
+  assert.match(stderr, /MTH_HOME/);
   assert.match(stderr, /sandbox-exec\.sh/);
+});
+
+test('review --engine native chỉ có tên biến cũ (không có MTH_HOME) → exit 64, không fallback', async (t) => {
+  const home = await makeDystopiaHome(t);
+  const legacy = await mkdtemp(path.join(tmpdir(), 'dystopia-mth-legacy-'));
+  t.after(() => rm(legacy, { recursive: true, force: true }));
+  await mkdir(path.join(legacy, 'lib'), { recursive: true });
+  const sandbox = path.join(legacy, 'lib', 'sandbox-exec.sh');
+  await writeFile(sandbox, '#!/usr/bin/env bash\nexit 0\n');
+  await chmod(sandbox, 0o755);
+
+  const legacyHomeEnv = ['CODER', 'HOME'].join('_');
+  const env = bareEnv({
+    DYSTOPIA_HOME: home.home,
+    DYSTOPIA_ENV_FILE: home.envFile,
+  });
+  env[legacyHomeEnv] = legacy;
+  delete env.MTH_HOME;
+  const { code, stderr } = await runCli(
+    ['review', '--engine', 'native', '--from', 'base0001', '--to', 'head0002'],
+    env,
+  );
+  assert.equal(code, 64);
+  assert.match(stderr, /MTH_HOME/);
+  assert.match(stderr, /sandbox-exec\.sh/);
+  assert.doesNotMatch(stderr, new RegExp(legacyHomeEnv));
 });
 
 test('review --engine native với DYSTOPIA_MODEL lạ → exit 64 kèm danh sách', async (t) => {
@@ -256,14 +282,14 @@ test('review --engine native với DYSTOPIA_MODEL lạ → exit 64 kèm danh sá
   assert.match(stderr, /deepseek-v4\.1-flash/);
 });
 
-test('coder main: models không tham số, tham số lạ → 64', async (t) => {
+test('mth main: models không tham số, tham số lạ → 64', async (t) => {
   const home = await makeDystopiaHome(t);
   const env = bareEnv({ DYSTOPIA_HOME: home.home });
-  const ok = await runNode(CODER_MODULE, ['models'], env);
+  const ok = await runNode(MTH_MODULE, ['models'], env);
   assert.equal(ok.code, 0);
   assert.match(ok.stdout, /dystopia/);
 
-  const bad = await runNode(CODER_MODULE, ['bogus'], env);
+  const bad = await runNode(MTH_MODULE, ['bogus'], env);
   assert.equal(bad.code, 64);
   assert.match(bad.stderr, /tham số lạ/);
 });

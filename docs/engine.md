@@ -139,8 +139,8 @@ Commit B đã có:
 
 - adapter native chạy lõi Pi qua thư viện, đọc key/model từ cấu hình riêng của Dystopia
   (`$DYSTOPIA_HOME`, `agent/models.json`), `DYSTOPIA_MODEL` chọn theo tên, model mặc định khác
-  `CODER_DEFAULT_MODEL`, ghi model thật vào `meta.model`; `CODER_HOME` chỉ còn để tìm
-  `$CODER_HOME/lib/sandbox-exec.sh` (thiếu → exit 64);
+  `MTH_DEFAULT_MODEL`, ghi model thật vào `meta.model`; `MTH_HOME` (thư mục cài MTH,
+  `tools/moonlight-throne`) chỉ còn để tìm `$MTH_HOME/lib/sandbox-exec.sh` (thiếu → exit 64);
 - pha file: mỗi file thay đổi một lượt agent, chạy song song có giới hạn;
 - tool chỉ đọc `read_file`, `list_changed_files`, `grep`, `git_show`; `report_finding` kiểm
   schema ngay; lệnh git chạy qua `sandbox-exec` của MTH;

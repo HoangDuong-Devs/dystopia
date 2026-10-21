@@ -37,14 +37,14 @@ async function writeEnv(home, mode) {
   return file;
 }
 
-async function makeFakeCoderHome(t) {
-  const home = await mkdtemp(path.join(tmpdir(), 'dystopia-leak-coder-'));
+async function makeFakeMthHome(t) {
+  const home = await mkdtemp(path.join(tmpdir(), 'dystopia-leak-mth-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   await mkdir(path.join(home, 'lib'), { recursive: true });
   const script = path.join(home, 'lib', 'sandbox-exec.sh');
   await writeFile(
     script,
-    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${CODER_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${MTH_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
   );
   await chmod(script, 0o755);
   return home;
@@ -53,8 +53,8 @@ async function makeFakeCoderHome(t) {
 function cleanEnv(extra = {}) {
   const env = { ...process.env };
   for (const name of [
-    'CODER_HOME',
-    'CODER_DEFAULT_MODEL',
+    'MTH_HOME',
+    'MTH_DEFAULT_MODEL',
     'DYSTOPIA_HOME',
     'DYSTOPIA_AGENT_DIR',
     'DYSTOPIA_ENV_FILE',
@@ -104,7 +104,7 @@ test('dystopia models với .env 600: không in key', async (t) => {
 test('review native (driver giả) với .env 600: output/meta không chứa key', async (t) => {
   const home = await makeHome(t);
   await writeEnv(home, 0o600);
-  const coderHome = await makeFakeCoderHome(t);
+  const mthHome = await makeFakeMthHome(t);
   const repo = await makeNativeRepo(t, { files: 1 });
   const outFile = path.join(home, 'result.json');
   const scenario = {
@@ -126,7 +126,7 @@ test('review native (driver giả) với .env 600: output/meta không chứa key
   };
   const env = cleanEnv({
     DYSTOPIA_HOME: home,
-    CODER_HOME: coderHome,
+    MTH_HOME: mthHome,
     DYSTOPIA_NATIVE_DRIVER: FAKE_DRIVER,
     DYSTOPIA_FAKE_SCENARIO: JSON.stringify(scenario),
   });
@@ -142,7 +142,7 @@ test('review native (driver giả) với .env 600: output/meta không chứa key
   assertNoKey('review', stdout, stderr, output, JSON.stringify(parsed.meta));
 });
 
-test('review native thiếu CODER_HOME: exit 64, không lộ key', async (t) => {
+test('review native thiếu MTH_HOME: exit 64, không lộ key', async (t) => {
   const home = await makeHome(t);
   await writeEnv(home, 0o600);
   const { code, stdout, stderr } = await runCli(
@@ -150,8 +150,8 @@ test('review native thiếu CODER_HOME: exit 64, không lộ key', async (t) => 
     cleanEnv({ DYSTOPIA_HOME: home }),
   );
   assert.equal(code, 64);
-  assert.match(stderr, /CODER_HOME/);
-  assertNoKey('missing CODER_HOME', stdout, stderr);
+  assert.match(stderr, /MTH_HOME/);
+  assertNoKey('missing MTH_HOME', stdout, stderr);
 });
 
 test('.env 644 bị từ chối exit 64, không in nội dung', async (t) => {

@@ -630,18 +630,18 @@ test('không có DYSTOPIA_BENCH_REVIEWER: bench gọi engine qua hợp đồng v
 });
 
 test('bench --engine native chạy được với MTH + driver giả (tự skip nếu thiếu sandbox)', async (t) => {
-  const coderHome = process.env.CODER_HOME?.trim();
-  if (!coderHome) {
-    t.skip('thiếu CODER_HOME');
+  const mthHome = process.env.MTH_HOME?.trim();
+  if (!mthHome) {
+    t.skip('thiếu MTH_HOME');
     return;
   }
-  const sandbox = path.join(coderHome, 'lib', 'sandbox-exec.sh');
+  const sandbox = path.join(mthHome, 'lib', 'sandbox-exec.sh');
   if (!existsSync(sandbox)) {
-    t.skip('thiếu $CODER_HOME/lib/sandbox-exec.sh');
+    t.skip('thiếu $MTH_HOME/lib/sandbox-exec.sh');
     return;
   }
   const repo = await makeNativeRepo(t, { files: 1 });
-  const probe = await execFileAsync(sandbox, ['true'], { env: { ...process.env, CODER_WORKDIR: repo.dir } }).then(
+  const probe = await execFileAsync(sandbox, ['true'], { env: { ...process.env, MTH_WORKDIR: repo.dir } }).then(
     () => true,
     () => false,
   );
@@ -680,7 +680,7 @@ test('bench --engine native chạy được với MTH + driver giả (tự skip 
     ],
   };
   const env = benchEnv(bench, {
-    CODER_HOME: coderHome,
+    MTH_HOME: mthHome,
     DYSTOPIA_NATIVE_DRIVER: path.join(ROOT, 'test', 'fixtures', 'native-driver', 'fake-driver.mjs'),
     DYSTOPIA_FAKE_SCENARIO: JSON.stringify(scenario),
   });

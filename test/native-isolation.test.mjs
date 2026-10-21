@@ -176,12 +176,12 @@ test('CLI: một file lỗi hai lần → exit 0, meta.errors chỉ file đó', 
   await mkdir(agentDir, { recursive: true });
   await cp(MODELS_FILE, path.join(agentDir, 'models.json'));
 
-  const coderHome = await makeDir(t, 'dystopia-isolation-coder-');
-  await mkdir(path.join(coderHome, 'lib'), { recursive: true });
-  const sandbox = path.join(coderHome, 'lib', 'sandbox-exec.sh');
+  const mthHome = await makeDir(t, 'dystopia-isolation-mth-');
+  await mkdir(path.join(mthHome, 'lib'), { recursive: true });
+  const sandbox = path.join(mthHome, 'lib', 'sandbox-exec.sh');
   await writeFile(
     sandbox,
-    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${CODER_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${MTH_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
   );
   await chmod(sandbox, 0o755);
 
@@ -196,7 +196,7 @@ test('CLI: một file lỗi hai lần → exit 0, meta.errors chỉ file đó', 
   for (const name of ['DYSTOPIA_AGENT_DIR', 'DYSTOPIA_ENV_FILE', 'DYSTOPIA_MODEL']) delete env[name];
   Object.assign(env, {
     DYSTOPIA_HOME: home,
-    CODER_HOME: coderHome,
+    MTH_HOME: mthHome,
     DYSTOPIA_NATIVE_DRIVER: FAKE_DRIVER,
     DYSTOPIA_FAKE_SCENARIO: JSON.stringify(scenario),
   });

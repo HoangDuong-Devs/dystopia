@@ -43,13 +43,13 @@ file phase only: one agent turn per changed file, read-only tools (`read_file`,
 `meta.truncated`. Native requires `--from` and `--to` (no `-c`). Its key and model config are its
 own: the launcher reads `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}` (mode broader than 600 → exit
 64) and the agent dir is `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`; it never uses
-`$CODER_HOME/agent` or MTH's `.env`. Models come from `agent/models.json` (provider
+`$MTH_HOME/agent` or MTH's `.env`. Models come from `agent/models.json` (provider
 `commandcode`; `apiKey` holds only the env var name `COMMANDCODE_API_KEY`); `DYSTOPIA_MODEL`
 selects one by name and the default is a model different from the coding model
-(`CODER_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
-models. `CODER_HOME` is still required but only to locate
-`$CODER_HOME/lib/sandbox-exec.sh`; git reads run through it. The per-file system prompt is
-`lib/engine/native/prompts/file-review.md` (Kosma's pass 1); `prompts/cross-file.md` is kept for
+(`MTH_DEFAULT_MODEL`). `dystopia models` lists them and marks the Dystopia and coding
+models. `MTH_HOME` (the MTH install directory, `tools/moonlight-throne`) is still required
+but only to locate `$MTH_HOME/lib/sandbox-exec.sh`; git reads run through it. The per-file
+system prompt is `lib/engine/native/prompts/file-review.md` (Kosma's pass 1); `prompts/cross-file.md` is kept for
 a later cross-file pass. The summary phase and deduplication are still commit C. See
 `docs/native.md`.
 
@@ -80,7 +80,7 @@ arguments. See `docs/bench.md` for the case schema and scoring rules.
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | provider overrides (default CommandCode, OpenAI-compatible) |
 | `DYSTOPIA_BENCH_DIR` | benchmark data directory (default `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | command used by `bench` instead of `dystopia review` |
-| `CODER_HOME` | MTH install directory, only to locate `$CODER_HOME/lib/sandbox-exec.sh` (required by the native engine) |
+| `MTH_HOME` | MTH install directory (`tools/moonlight-throne`), only to locate `$MTH_HOME/lib/sandbox-exec.sh` (required by the native engine) |
 | `DYSTOPIA_MODEL` | native model to use; must exist in Dystopia's `agent/models.json` |
 | `DYSTOPIA_PI_SDK` | override the Pi SDK `dist/index.js` path |
 | `DYSTOPIA_NATIVE_DRIVER` | test-only `.mjs` fake driver (never used in normal runs) |
@@ -88,6 +88,6 @@ arguments. See `docs/bench.md` for the case schema and scoring rules.
 Never commit `.env`, and never print it or the key. **Key rotation on fc1 updates two copies:**
 MTH's `.env` and Dystopia's `$DYSTOPIA_HOME/.env`. Variable names: `COMMANDCODE_API_KEY`,
 `OCR_LLM_TOKEN`, `OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`,
-`CODER_HOME`. See `GUIDE.md` (Vietnamese) for details, `docs/engine.md` for the engine
+`MTH_HOME`. See `GUIDE.md` (Vietnamese) for details, `docs/engine.md` for the engine
 contract, `docs/native.md` for the native engine, `docs/ocr-output.md` for the output schema
 and `NOTICE` for attribution.

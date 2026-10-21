@@ -223,12 +223,12 @@ test('review native: lỗi 401 của driver làm CLI exit 21, không ghi output 
     }),
   );
 
-  const coderHome = await makeDir(t, 'dystopia-driver-coder-');
-  await mkdir(path.join(coderHome, 'lib'), { recursive: true });
-  const sandbox = path.join(coderHome, 'lib', 'sandbox-exec.sh');
+  const mthHome = await makeDir(t, 'dystopia-driver-mth-');
+  await mkdir(path.join(mthHome, 'lib'), { recursive: true });
+  const sandbox = path.join(mthHome, 'lib', 'sandbox-exec.sh');
   await writeFile(
     sandbox,
-    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${CODER_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${MTH_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
   );
   await chmod(sandbox, 0o755);
 
@@ -251,7 +251,7 @@ test('review native: lỗi 401 của driver làm CLI exit 21, không ghi output 
   }
   Object.assign(env, {
     DYSTOPIA_HOME: home,
-    CODER_HOME: coderHome,
+    MTH_HOME: mthHome,
     DYSTOPIA_PI_SDK: sdkPath,
   });
 

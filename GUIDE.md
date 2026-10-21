@@ -37,13 +37,13 @@ Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho
 - Bắt buộc `--from <base> --to <head>`; thiếu hoặc dùng `-c` → exit 64 với gợi ý `--from/--to`.
 - Key và model là của riêng Dystopia: launcher đọc `${DYSTOPIA_ENV_FILE:-$DYSTOPIA_HOME/.env}`
   (từ chối exit 64 nếu quyền rộng hơn 600), agent dir là
-  `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`. Không dùng `$CODER_HOME/agent` hay `.env` của MTH.
+  `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`. Không dùng `$MTH_HOME/agent` hay `.env` của MTH.
 - Model đọc từ `agent/models.json` (provider `commandcode`; `apiKey` chỉ là tên biến
   `COMMANDCODE_API_KEY`). `DYSTOPIA_MODEL` chọn theo tên, mặc định là model khác model viết code
-  (`CODER_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`). `dystopia models` in danh sách,
+  (`MTH_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`). `dystopia models` in danh sách,
   đánh dấu `*` model Dystopia đang chọn và `[code]` model viết code.
-- `CODER_HOME` vẫn bắt buộc nhưng **chỉ** để tìm `$CODER_HOME/lib/sandbox-exec.sh`; thiếu biến
-  hoặc thiếu file → exit 64.
+- `MTH_HOME` (thư mục cài MTH, `tools/moonlight-throne`) vẫn bắt buộc nhưng **chỉ** để tìm
+  `$MTH_HOME/lib/sandbox-exec.sh`; thiếu biến hoặc thiếu file → exit 64.
 - Mỗi file thay đổi một lượt agent; tool chỉ đọc `read_file` (tối đa 150 dòng/12000 ký tự mỗi
   lần, mặc định đọc quanh hunk diff), `list_changed_files`, `grep` (tối đa 60 dòng khớp),
   `git_show` (chỉ base/head, tối đa 200 dòng), và `report_finding` kiểm schema ngay
@@ -53,7 +53,7 @@ Engine `native` (commit B, pha file) chạy lõi Pi trong tiến trình thay cho
   file được dành cho report: chạm ngưỡng thì ngừng đọc và gửi một lượt cuối để báo finding;
   chỉ vượt trần cứng mới dừng hẳn và ghi file vào `meta.truncated`. File lỗi provider được
   retry một lần; lỗi còn lại vào `meta.errors` và output được ghi tăng dần (`meta.partial`).
-- Lệnh git chạy qua `$CODER_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH, env allowlist
+- Lệnh git chạy qua `$MTH_HOME/lib/sandbox-exec.sh` (sandbox chỉ đọc của MTH, env allowlist
   không chứa key/token), không tự viết sandbox.
 - Prompt pha file là `lib/engine/native/prompts/file-review.md` của Kosma;
   `prompts/cross-file.md` để dành cho pha cross-file sau này. Pha tổng và khử trùng lặp vẫn là
@@ -93,7 +93,7 @@ engine lạ). `--engine native` dùng được và nhận các cờ giới hạn
 | `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `OCR_LLM_TOKEN` | ghi đè provider |
 | `DYSTOPIA_BENCH_DIR` | thư mục dữ liệu bench (mặc định `$HOME/firemoth/tools/dystopia-bench`) |
 | `DYSTOPIA_BENCH_REVIEWER` | lệnh reviewer thay cho `dystopia review` (dùng khi test) |
-| `CODER_HOME` | thư mục cài MTH, chỉ để tìm `$CODER_HOME/lib/sandbox-exec.sh` (bắt buộc với engine native) |
+| `MTH_HOME` | thư mục cài MTH (`tools/moonlight-throne`), chỉ để tìm `$MTH_HOME/lib/sandbox-exec.sh` (bắt buộc với engine native) |
 | `DYSTOPIA_MODEL` | model native dùng; phải có trong `agent/models.json` của Dystopia |
 | `DYSTOPIA_PI_SDK` | ghi đè đường dẫn `dist/index.js` của Pi SDK |
 | `DYSTOPIA_NATIVE_DRIVER` | file `.mjs` driver giả, chỉ dùng khi test |
@@ -102,7 +102,7 @@ Không in key ra log/chat, không đưa key vào meta/output JSON.
 
 **Xoay key:** trên fc1 phải cập nhật **cả hai** bản `.env` — `.env` của MTH và
 `$DYSTOPIA_HOME/.env` của Dystopia. Tên biến: `COMMANDCODE_API_KEY`, `OCR_LLM_TOKEN`,
-`OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`, `CODER_HOME`.
+`OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`, `MTH_HOME`.
 
 ## Đầu ra JSON
 Mặc định `review` in schema chuẩn hóa `{ meta, findings }`:

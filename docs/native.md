@@ -17,8 +17,8 @@ dystopia models
 | File | Việc |
 |---|---|
 | `lib/engine/native/index.mjs` | adapter cho hợp đồng `review({repo, base, head, rules, limits})`; nối tool, model, driver, vòng lặp; gọi `validateResult` trước khi trả |
-| `lib/engine/native/config.mjs` | `DYSTOPIA_HOME`, agent dir, env file, Pi SDK, `$CODER_HOME/lib/sandbox-exec.sh` |
-| `lib/engine/native/coder.mjs` | đọc `agent/models.json` của Dystopia, chọn model; CLI `dystopia models` |
+| `lib/engine/native/config.mjs` | `DYSTOPIA_HOME`, agent dir, env file, Pi SDK, `$MTH_HOME/lib/sandbox-exec.sh` |
+| `lib/engine/native/mth.mjs` | đọc `agent/models.json` của Dystopia, chọn model; CLI `dystopia models` |
 | `lib/engine/native/tools.mjs` | 4 tool chỉ đọc + chạy git qua `sandbox-exec` của MTH + danh sách file bỏ qua |
 | `lib/engine/native/finding.mjs` | `report_finding`, kiểm schema, sắp xếp finding |
 | `lib/engine/native/loop.mjs` | pha file, pool song song có giới hạn, ngân sách token/tool call, meta |
@@ -40,22 +40,22 @@ dystopia models
   `dystopia: <file> có quyền XXX, rộng hơn 600; chạy chmod 600 ...` ra stderr **không kèm nội
   dung file** và exit 64. `dystopia --version` chạy trước bước này nên không cần env file.
 - Agent dir là `${DYSTOPIA_AGENT_DIR:-$DYSTOPIA_HOME/agent}`. Dystopia **không** dùng
-  `$CODER_HOME/agent`, không đọc `auth.json` hay `.env` của MTH.
+  `$MTH_HOME/agent`, không đọc `auth.json` hay `.env` của MTH.
 - `agent/models.json` (commit trong repo) khai báo provider `commandcode`,
   `baseUrl=https://api.commandcode.ai/provider/v1`, `api=openai-completions`, và
   `apiKey: "$COMMANDCODE_API_KEY"` — Pi hiểu `$NAME`/`${NAME}` là **env interpolation**, nên
   đây là tên biến môi trường chứ không phải giá trị key literal. Key thật chỉ nằm trong
   `$DYSTOPIA_HOME/.env` (hoặc env của tiến trình).
-- `listModels()` đọc và parse `agent/models.json`; không chạy `$CODER_HOME/coder models`.
+- `listModels()` đọc và parse `agent/models.json`; không chạy `mth models` của MTH.
   File thiếu/hỏng/không có model → exit 64, lỗi chỉ nêu đường dẫn, không in nội dung.
-- `CODER_HOME` vẫn **bắt buộc** với engine native nhưng **chỉ** để tìm
-  `$CODER_HOME/lib/sandbox-exec.sh`; thiếu biến hoặc thiếu file → exit 64.
+- `MTH_HOME` (thư mục cài MTH, `tools/moonlight-throne`) vẫn **bắt buộc** với engine native
+  nhưng **chỉ** để tìm `$MTH_HOME/lib/sandbox-exec.sh`; thiếu biến hoặc thiếu file → exit 64.
 - `DYSTOPIA_MODEL` đặt → phải có trong `models.json`, khớp theo tên model (kèm `provider/`
   nếu có); không có → exit 64 kèm danh sách.
 - Không đặt `DYSTOPIA_MODEL` → model đầu tiên trong danh sách ưu tiên
   `deepseek/deepseek-v4.1-flash`, `Qwen/Qwen3.8-Omni-Flash` có trong config **và khác model
   viết code**; không có thì model đầu tiên khác model viết code; không còn ứng viên → exit 64.
-- Model viết code là `CODER_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`.
+- Model viết code là `MTH_DEFAULT_MODEL`, mặc định `deepseek-v4.1-flash-fast`.
   So sánh "khác" theo tên model sau khi bỏ tiền tố provider/vendor, nên
   `deepseek-v4.1-flash-fast` khác `deepseek-v4.1-flash`. Với `agent/models.json` hiện tại,
   mặc định Dystopia chọn `deepseek/deepseek-v4.1-flash`.
@@ -93,13 +93,13 @@ Chặn đường dẫn cho mọi tool (kiểm theo **cây git của revision**, 
 - với glob của `grep`, các đoạn tĩnh trước ký tự glob cũng được kiểm theo cây head.
 
 Mọi lệnh git (kể cả `cat-file`/`ls-tree`/`grep` đọc nội dung head) chạy qua
-`$CODER_HOME/lib/sandbox-exec.sh '<lệnh git>'` với `CODER_WORKDIR=<repo>`: sandbox bwrap
-chỉ đọc của MTH, không mạng. Đây là **cách duy nhất** engine native còn dùng `CODER_HOME`.
+`$MTH_HOME/lib/sandbox-exec.sh '<lệnh git>'` với `MTH_WORKDIR=<repo>`: sandbox bwrap
+chỉ đọc của MTH, không mạng. Đây là **cách duy nhất** engine native còn dùng `MTH_HOME`.
 Engine không tự viết sandbox và không chạy lệnh nào khác ngoài git đọc.
 
 Biến môi trường truyền vào `sandbox-exec.sh` là **allowlist**, không phải bản sao `process.env`:
-`PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, các biến `GIT_*`, các biến `CODER_*`
-cấu hình sandbox và `CODER_WORKDIR=<repo>`. Mọi tên khớp `/KEY|TOKEN|SECRET|PASSWORD/i`
+`PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, các biến `GIT_*`, các biến `MTH_*`
+cấu hình sandbox và `MTH_WORKDIR=<repo>`. Mọi tên khớp `/KEY|TOKEN|SECRET|PASSWORD/i`
 và mọi biến ngoài allowlist đều bị bỏ, nên `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN` không bao giờ
 đi vào tiến trình sandbox.
 
@@ -198,13 +198,13 @@ file lỗi và `meta.partial` cho biết lần ghi hiện tại là tạm hay cu
 `driver-pi.mjs` tách lớp `createDriver`/`prompt`/`usage`/`abort` khỏi vòng lặp:
 
 - import động Pi SDK: `DYSTOPIA_PI_SDK` nếu đặt, mặc định
-  `$DYSTOPIA_HOME/../pi/packages/coding-agent/dist/index.js` (không còn suy ra từ `CODER_HOME`);
+  `$DYSTOPIA_HOME/../pi/packages/coding-agent/dist/index.js` (không còn suy ra từ `MTH_HOME`);
 - đặt `PI_CODING_AGENT_DIR=$DYSTOPIA_AGENT_DIR` (mặc định `$DYSTOPIA_HOME/agent`) và truyền
   `modelsPath=$DYSTOPIA_AGENT_DIR/models.json`; không cần `auth.json`, key lấy từ biến
   `COMMANDCODE_API_KEY` mà `models.json` trỏ tới;
 - `SessionManager.inMemory()`, settings trong bộ nhớ (tắt compaction/retry);
 - `noTools: true` + `customTools` đúng 5 tool ở trên;
-- model lấy từ `coder.mjs`, thinking `off`, system prompt mặc định là `prompts/file-review.md`.
+- model lấy từ `mth.mjs`, thinking `off`, system prompt mặc định là `prompts/file-review.md`.
 
 Sau `session.prompt`, driver kiểm assistant message cuối. Nếu `stopReason` là `error` (hoặc
 `prompt` ném lỗi), driver ném `EngineError` kèm thông điệp lỗi provider, đã thay mọi giá trị
@@ -233,7 +233,7 @@ Test không gọi LLM thật: truyền driver giả qua tham số `driver` của
 | `DYSTOPIA_ENV_FILE` | env file; mặc định `$DYSTOPIA_HOME/.env` (phải có quyền không rộng hơn 600) |
 | `DYSTOPIA_AGENT_DIR` | agent dir riêng; mặc định `$DYSTOPIA_HOME/agent` |
 | `COMMANDCODE_API_KEY` | key thật, chỉ nằm trong env/.env; `agent/models.json` chỉ ghi tên biến này |
-| `CODER_HOME` | thư mục cài MTH, **chỉ** để tìm `$CODER_HOME/lib/sandbox-exec.sh` (bắt buộc với engine native) |
+| `MTH_HOME` | thư mục cài MTH (`tools/moonlight-throne`), **chỉ** để tìm `$MTH_HOME/lib/sandbox-exec.sh` (bắt buộc với engine native) |
 | `DYSTOPIA_MODEL` | model native dùng; phải có trong `agent/models.json` của Dystopia |
 | `DYSTOPIA_PI_SDK` | ghi đè đường dẫn `dist/index.js` của Pi SDK |
 | `DYSTOPIA_NATIVE_DRIVER` | file `.mjs` driver giả cho test (không dùng khi chạy thật) |
@@ -244,7 +244,7 @@ launcher map `OCR_LLM_TOKEN` từ `COMMANDCODE_API_KEY` khi biến này chưa đ
 
 **Xoay key:** trên fc1 có **hai bản** `.env` cần cập nhật cùng lúc — `.env` của MTH và
 `$DYSTOPIA_HOME/.env` của Dystopia. Tên biến: `COMMANDCODE_API_KEY`, `OCR_LLM_TOKEN`,
-`OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`, `CODER_HOME`.
+`OCR_LLM_MODEL`, `OCR_LLM_URL`, `OCR_LLM_PROTOCOL`, `DYSTOPIA_MODEL`, `MTH_HOME`.
 
 ## 8. Prompt, pha tổng, khử trùng lặp (commit C)
 
@@ -267,7 +267,7 @@ dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `
   env allowlist của `sandbox-exec` (không lọt key/token), `git_show` rev lạ, lọc file bỏ qua;
   test đọc head qua git khi checkout ở đĩa là commit cũ (`read_file`/`grep` trả nội dung head,
   file đã xoá ở head bị từ chối); một test chạy thật qua `sandbox-exec` và tự skip khi thiếu
-  `CODER_HOME`/bwrap.
+  `MTH_HOME`/bwrap.
 - `test/native-finding.test.mjs`: từ chối severity sai, line ngoài head, file không đổi,
   evidence rỗng; agent sửa lại trong cùng lượt.
 - `test/native-loop.test.mjs`: `max-tool-calls` → `truncated` giữ finding, ngân sách dự phòng
@@ -278,8 +278,8 @@ dòng/12000 ký tự và cửa sổ mặc định quanh hunk, `grep` 60 dòng, `
 - `test/native-isolation.test.mjs`: một file lỗi stream hai lần → file khác vẫn có finding,
   `meta.errors` đúng file, output `partial: true` ghi sau file đầu, exit 0; lỗi một lần rồi
   thành công → không có `meta.errors`; mọi file lỗi → exit 20.
-- `test/native-coder.test.mjs`: đọc `agent/models.json` (không cần `CODER_HOME`),
-  `CODER_HOME` thiếu khi review native → 64, `DYSTOPIA_MODEL` lạ → 64, model mặc định khác
+- `test/native-mth.test.mjs`: đọc `agent/models.json` (không cần `MTH_HOME`),
+  `MTH_HOME` thiếu khi review native → 64, `DYSTOPIA_MODEL` lạ → 64, model mặc định khác
   model viết code, `dystopia models`.
 - `test/no-key-leak.test.mjs`: đặt key giả trong `.env` 600 rồi chạy `models`, review native
   (driver giả) và các đường lỗi; khẳng định key không có trong stdout/stderr/output JSON;
@@ -295,7 +295,7 @@ Fixture chỉ dùng tên giả (`src/file1.ts`, ...), không chứa code hay tê
 
 | Code | Khi nào |
 |---|---|
-| `64` | `.env` rộng hơn 600, thiếu `agent/models.json`, thiếu `CODER_HOME` hoặc `$CODER_HOME/lib/sandbox-exec.sh`, `DYSTOPIA_MODEL` lạ, thiếu `--from`/`--to`, dùng `-c` với native, giới hạn sai, không tìm thấy Pi SDK/model |
+| `64` | `.env` rộng hơn 600, thiếu `agent/models.json`, thiếu `MTH_HOME` hoặc `$MTH_HOME/lib/sandbox-exec.sh`, `DYSTOPIA_MODEL` lạ, thiếu `--from`/`--to`, dùng `-c` với native, giới hạn sai, không tìm thấy Pi SDK/model |
 | `20` | lỗi provider khác khi chạy Pi (`NATIVE_ERROR`), hoặc **mọi file** đều lỗi sau retry (`NATIVE_ALL_FILES_FAILED`); output tạm `partial: true` có thể còn lại |
 | `21` | provider trả 401/403 (lỗi xác thực, `NATIVE_AUTH`) |
 | `23` | provider trả 429 (giới hạn tốc độ, `NATIVE_RATE`) |

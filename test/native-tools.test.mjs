@@ -234,7 +234,7 @@ test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) 
       COMMANDCODE_API_KEY: fakeKey,
       OCR_LLM_TOKEN: fakeToken,
       GIT_AUTHOR_NAME: 'sandbox-test',
-      CODER_SANDBOX_MODE: 'read-only',
+      MTH_SANDBOX_MODE: 'read-only',
       DYSTOPIA_UNRELATED: 'bo',
     },
   });
@@ -250,8 +250,8 @@ test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) 
   assert.match(seen, /^PATH=/m);
   assert.match(seen, /^HOME=/m);
   assert.match(seen, /^GIT_AUTHOR_NAME=sandbox-test$/m);
-  assert.match(seen, /^CODER_SANDBOX_MODE=read-only$/m);
-  assert.match(seen, new RegExp(`^CODER_WORKDIR=${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+  assert.match(seen, /^MTH_SANDBOX_MODE=read-only$/m);
+  assert.match(seen, new RegExp(`^MTH_WORKDIR=${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
 });
 
 test('loadIgnorePatterns: mặc định + rules-overlay/ignore.txt', async (t) => {
@@ -263,9 +263,9 @@ test('loadIgnorePatterns: mặc định + rules-overlay/ignore.txt', async (t) =
 test(
   'git tool chạy thật qua sandbox-exec của MTH (tự skip nếu thiếu)',
   { skip: (() => {
-    const home = process.env.CODER_HOME?.trim();
-    if (!home) return 'thiếu CODER_HOME';
-    if (!existsSync(path.join(home, 'lib', 'sandbox-exec.sh'))) return 'thiếu $CODER_HOME/lib/sandbox-exec.sh';
+    const home = process.env.MTH_HOME?.trim();
+    if (!home) return 'thiếu MTH_HOME';
+    if (!existsSync(path.join(home, 'lib', 'sandbox-exec.sh'))) return 'thiếu $MTH_HOME/lib/sandbox-exec.sh';
     return false;
   })() },
   async (t) => {

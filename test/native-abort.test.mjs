@@ -189,12 +189,12 @@ async function makeCliEnv(t, scenario) {
     }),
   );
 
-  const coderHome = await makeDir(t, 'dystopia-abort-coder-');
-  await mkdir(path.join(coderHome, 'lib'), { recursive: true });
-  const sandbox = path.join(coderHome, 'lib', 'sandbox-exec.sh');
+  const mthHome = await makeDir(t, 'dystopia-abort-mth-');
+  await mkdir(path.join(mthHome, 'lib'), { recursive: true });
+  const sandbox = path.join(mthHome, 'lib', 'sandbox-exec.sh');
   await writeFile(
     sandbox,
-    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${CODER_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
+    '#!/usr/bin/env bash\nset -euo pipefail\ncd "${MTH_WORKDIR:-$PWD}"\nexec bash -c "$1"\n',
   );
   await chmod(sandbox, 0o755);
 
@@ -203,7 +203,7 @@ async function makeCliEnv(t, scenario) {
     ...process.env,
     COMMANDCODE_API_KEY: 'fake-key-abort-7f21',
     DYSTOPIA_HOME: home,
-    CODER_HOME: coderHome,
+    MTH_HOME: mthHome,
     DYSTOPIA_PI_SDK: sdkPath,
   };
   for (const name of ['DYSTOPIA_AGENT_DIR', 'DYSTOPIA_ENV_FILE', 'DYSTOPIA_MODEL', 'DYSTOPIA_NATIVE_DRIVER']) {
