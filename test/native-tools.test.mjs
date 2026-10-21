@@ -12,10 +12,45 @@ import process from 'node:process';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { createGitRunner, createSandboxRunner, createTools, loadIgnorePatterns, resolveCommit } from '../lib/engine/native/tools.mjs';
+import {
+  createGitRunner,
+  createSandboxRunner,
+  createTools,
+  loadIgnorePatterns,
+  resolveCommit,
+  sandboxEnv,
+} from '../lib/engine/native/tools.mjs';
 import { makeNativeRepo, git as gitCli } from './fixtures/native-repo/repo.mjs';
 
 const execFileAsync = promisify(execFile);
+const HOST_MTH_WORKDIR = '/somewhere-else';
+const SANDBOX_LEAK_ENV = Object.freeze({
+  CODER_WORKDIR: 'host-coder-workdir-b41e',
+  CODER_HOME: 'host-coder-home-b41e',
+  CODER_EXTRA_RW: 'host-coder-extra-rw-b41e',
+  MTH_AGENT_DIR: 'host-mth-agent-dir-b41e',
+  MTH_EXTRA_RW: 'host-mth-extra-rw-b41e',
+  MTH_EXTRA_RO: 'host-mth-extra-ro-b41e',
+  MTH_PASS_ENV: 'host-mth-pass-env-b41e',
+  MTH_ENV_FILE: 'host-mth-env-file-b41e',
+  MTH_SANDBOX_NET: 'host-mth-sandbox-net-b41e',
+  MTH_SANDBOX_MODE: 'host-mth-sandbox-mode-b41e',
+});
+const GIT_LEAK_ENV = Object.freeze({
+  GIT_AUTHOR_NAME: 'sandbox-test',
+  GIT_DIR: 'host-git-dir-b41e',
+  GIT_WORK_TREE: 'host-git-work-tree-b41e',
+  GIT_CONFIG_GLOBAL: 'host-git-config-global-b41e',
+  GIT_EXEC_PATH: 'host-git-exec-path-b41e',
+  GIT_SSH_COMMAND: 'ssh -o sandbox-test-b41e',
+});
+
+function assertNoSandboxLeak(seen, hostEnv) {
+  for (const [name, value] of Object.entries(hostEnv)) {
+    assert.ok(!seen.includes(name), `lọt tên ${name} vào sandbox`);
+    assert.ok(!seen.includes(value), `lọt giá trị ${name} vào sandbox`);
+  }
+}
 
 // Runner thay cho sandbox-exec trong test thường; vẫn chạy git thật trên repo giả.
 function localRunner(repo) {
@@ -214,6 +249,43 @@ test('read_file/grep đọc commit head qua git, độc lập checkout ở đĩa
   await assert.rejects(() => tools.grep({ pattern: 'new', path_glob: 'link-out/*' }), /symlink/);
 });
 
+test('sandboxEnv: allowlist cố định, MTH_WORKDIR luôn là repo, không lọt env host', () => {
+  const repo = '/repo/dystopia-workdir-b41e';
+  const fakeKey = 'fake-key-UNIT-4b1e';
+  const fakeToken = 'fake-token-UNIT-9c2d';
+  const hostEnv = {
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+    HOME: '/tmp/sandbox-home-unit',
+    LANG: 'C.UTF-8',
+    LC_ALL: 'C.UTF-8',
+    TERM: 'xterm-256color',
+    TMPDIR: '/tmp',
+    MTH_WORKDIR: HOST_MTH_WORKDIR,
+    ...SANDBOX_LEAK_ENV,
+    ...GIT_LEAK_ENV,
+    COMMANDCODE_API_KEY: fakeKey,
+    OCR_LLM_TOKEN: fakeToken,
+    DYSTOPIA_UNRELATED: 'host-dystopia-unrelated-b41e',
+  };
+
+  const env = sandboxEnv(hostEnv, repo);
+  assert.equal(env.MTH_WORKDIR, repo);
+  for (const name of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR']) {
+    assert.equal(env[name], hostEnv[name], `${name} phải giữ nguyên`);
+  }
+
+  const seen = Object.entries(env)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('\n');
+  assertNoSandboxLeak(seen, SANDBOX_LEAK_ENV);
+  assertNoSandboxLeak(seen, GIT_LEAK_ENV);
+  assert.ok(!seen.includes(HOST_MTH_WORKDIR), 'MTH_WORKDIR của host không được thắng repo');
+  assert.ok(!seen.includes(fakeKey), 'lọt giá trị COMMANDCODE_API_KEY vào env sandbox');
+  assert.ok(!seen.includes(fakeToken), 'lọt giá trị OCR_LLM_TOKEN vào env sandbox');
+  assert.ok(!seen.includes('DYSTOPIA_UNRELATED'), 'lọt biến ngoài allowlist vào env sandbox');
+  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'LANG', 'LC_ALL', 'MTH_WORKDIR', 'PATH', 'TERM', 'TMPDIR']);
+});
+
 test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'dystopia-sandbox-env-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -231,10 +303,11 @@ test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) 
     script,
     env: {
       ...process.env,
+      ...SANDBOX_LEAK_ENV,
+      ...GIT_LEAK_ENV,
+      MTH_WORKDIR: HOST_MTH_WORKDIR,
       COMMANDCODE_API_KEY: fakeKey,
       OCR_LLM_TOKEN: fakeToken,
-      GIT_AUTHOR_NAME: 'sandbox-test',
-      MTH_SANDBOX_MODE: 'read-only',
       DYSTOPIA_UNRELATED: 'bo',
     },
   });
@@ -247,10 +320,12 @@ test('sandbox-exec chỉ nhận env allowlist: không có key/token', async (t) 
   assert.ok(!seen.includes('COMMANDCODE_API_KEY'), 'lọt tên COMMANDCODE_API_KEY vào sandbox');
   assert.ok(!seen.includes('OCR_LLM_TOKEN'), 'lọt tên OCR_LLM_TOKEN vào sandbox');
   assert.ok(!seen.includes('DYSTOPIA_UNRELATED'), 'lọt biến ngoài allowlist vào sandbox');
+  assertNoSandboxLeak(seen, SANDBOX_LEAK_ENV);
+  assertNoSandboxLeak(seen, GIT_LEAK_ENV);
+  assert.ok(!seen.includes(HOST_MTH_WORKDIR), 'MTH_WORKDIR của host không được thắng repo');
   assert.match(seen, /^PATH=/m);
   assert.match(seen, /^HOME=/m);
-  assert.match(seen, /^GIT_AUTHOR_NAME=sandbox-test$/m);
-  assert.match(seen, /^MTH_SANDBOX_MODE=read-only$/m);
+  assert.doesNotMatch(seen, /^GIT_AUTHOR_NAME=/m, 'GIT_* không được truyền vào sandbox');
   assert.match(seen, new RegExp(`^MTH_WORKDIR=${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
 });
 

@@ -98,8 +98,9 @@ chỉ đọc của MTH, không mạng. Đây là **cách duy nhất** engine nat
 Engine không tự viết sandbox và không chạy lệnh nào khác ngoài git đọc.
 
 Biến môi trường truyền vào `sandbox-exec.sh` là **allowlist**, không phải bản sao `process.env`:
-`PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, các biến `GIT_*`, các biến `MTH_*`
-cấu hình sandbox và `MTH_WORKDIR=<repo>`. Mọi tên khớp `/KEY|TOKEN|SECRET|PASSWORD/i`
+`PATH`, `HOME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR` và `MTH_WORKDIR=<repo>` (Dystopia tự đặt).
+Không truyền `GIT_*` hay bất kỳ `MTH_*` nào khác từ host (kể cả `MTH_AGENT_DIR`), vì chúng
+có thể đổi repo/config git hoặc để lộ agent dir. Mọi tên khớp `/KEY|TOKEN|SECRET|PASSWORD/i`
 và mọi biến ngoài allowlist đều bị bỏ, nên `COMMANDCODE_API_KEY`/`OCR_LLM_TOKEN` không bao giờ
 đi vào tiến trình sandbox.
 
